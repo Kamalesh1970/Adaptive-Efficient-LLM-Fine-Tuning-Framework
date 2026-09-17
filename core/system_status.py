@@ -6,11 +6,16 @@ import sys
 import platform
 from typing import Dict, Any, Optional
 
-try:
-    import torch
-    HAS_TORCH = True
-except ImportError:
-    HAS_TORCH = False
+def _get_torch_module() -> Optional[Any]:
+    """Safely retrieves torch module if imported or present in sys.modules."""
+    torch_mod = sys.modules.get("torch")
+    if torch_mod is not None:
+        return torch_mod
+    try:
+        import torch
+        return torch
+    except ImportError:
+        return None
 
 
 def get_system_status() -> Dict[str, Any]:
@@ -23,7 +28,7 @@ def get_system_status() -> Dict[str, Any]:
     status: Dict[str, Any] = {
         "python_version": platform.python_version(),
         "os_platform": platform.platform(),
-        "pytorch_available": HAS_TORCH,
+        "pytorch_available": False,
         "pytorch_version": None,
         "cuda_available": False,
         "cuda_version": None,
@@ -31,17 +36,24 @@ def get_system_status() -> Dict[str, Any]:
         "cuda_device_names": [],
     }
 
-    if HAS_TORCH:
-        status["pytorch_version"] = torch.__version__
-        cuda_is_avail = torch.cuda.is_available()
+    torch_mod = _get_torch_module()
+    if torch_mod is not None:
+        status["pytorch_available"] = True
+        status["pytorch_version"] = getattr(torch_mod, "__version__", None)
+        cuda_is_avail = False
+        if hasattr(torch_mod, "cuda") and callable(getattr(torch_mod.cuda, "is_available", None)):
+            cuda_is_avail = torch_mod.cuda.is_available()
+
         status["cuda_available"] = cuda_is_avail
         if cuda_is_avail:
-            status["cuda_version"] = torch.version.cuda
-            count = torch.cuda.device_count()
+            version_obj = getattr(torch_mod, "version", None)
+            status["cuda_version"] = getattr(version_obj, "cuda", None) if version_obj else None
+            count = torch_mod.cuda.device_count() if hasattr(torch_mod.cuda, "device_count") else 0
             status["cuda_device_count"] = count
-            status["cuda_device_names"] = [
-                torch.cuda.get_device_name(i) for i in range(count)
-            ]
+            if hasattr(torch_mod.cuda, "get_device_name"):
+                status["cuda_device_names"] = [
+                    torch_mod.cuda.get_device_name(i) for i in range(count)
+                ]
 
     return status
 

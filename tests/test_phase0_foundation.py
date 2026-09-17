@@ -207,12 +207,11 @@ def test_system_status_mocked_cuda():
     mock_torch.cuda.get_device_name.side_effect = ["NVIDIA RTX 4090", "NVIDIA RTX 4090"]
 
     with patch.dict("sys.modules", {"torch": mock_torch}):
-        with patch("core.system_status.HAS_TORCH", True):
-            status = get_system_status()
-            assert status["pytorch_available"] is True
-            assert status["cuda_available"] is True
-            assert status["cuda_device_count"] == 2
-            assert status["cuda_device_names"] == ["NVIDIA RTX 4090", "NVIDIA RTX 4090"]
+        status = get_system_status()
+        assert status["pytorch_available"] is True
+        assert status["cuda_available"] is True
+        assert status["cuda_device_count"] == 2
+        assert status["cuda_device_names"] == ["NVIDIA RTX 4090", "NVIDIA RTX 4090"]
 
 
 # 7. CLI Entry Point Tests

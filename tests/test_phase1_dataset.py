@@ -141,12 +141,36 @@ def test_normalization_instruction():
     assert norm.output == "4"
 
 
-def test_normalization_conversational():
+def test_normalization_conversational_messages():
+    raw = {"messages": [{"role": "user", "content": "What is AI?"}, {"role": "assistant", "content": "AI is artificial intelligence."}]}
+    norm = DatasetNormalizer.normalize_sample(raw)
+    assert norm.schema_type == SchemaType.CONVERSATIONAL
+    assert norm.messages[0]["role"] == "user"
+    assert norm.messages[0]["content"] == "What is AI?"
+    assert norm.messages[1]["role"] == "assistant"
+    assert norm.messages[1]["content"] == "AI is artificial intelligence."
+
+
+def test_normalization_conversational_conversations():
     raw = {"conversations": [{"from": "human", "value": "Hi"}, {"from": "gpt", "value": "Hello!"}]}
     norm = DatasetNormalizer.normalize_sample(raw)
     assert norm.schema_type == SchemaType.CONVERSATIONAL
     assert norm.messages[0]["role"] == "user"
+    assert norm.messages[0]["content"] == "Hi"
     assert norm.messages[1]["role"] == "assistant"
+    assert norm.messages[1]["content"] == "Hello!"
+
+
+def test_invalid_conversational_data():
+    raw_invalid_role = {"conversations": [{"from": "invalid_role", "value": "Hello"}]}
+    errors = validate_raw_sample(raw_invalid_role)
+    assert len(errors) > 0
+    assert "Invalid message role" in errors[0]
+
+    raw_no_assistant = {"conversations": [{"from": "human", "value": "Hello"}]}
+    errors = validate_raw_sample(raw_no_assistant)
+    assert len(errors) > 0
+    assert "must include at least one valid assistant" in errors[0]
 
 
 # ---------------------------------------------------------------------------

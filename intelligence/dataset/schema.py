@@ -54,11 +54,13 @@ def detect_schema(sample: Dict[str, Any]) -> SchemaType:
     if not isinstance(sample, dict):
         raise DatasetError(f"Expected dict sample, got {type(sample).__name__}")
 
-    if "messages" in sample and isinstance(sample["messages"], list):
+    if ("messages" in sample and isinstance(sample["messages"], list)) or (
+        "conversations" in sample and isinstance(sample["conversations"], list)
+    ):
         return SchemaType.CONVERSATIONAL
 
     # Check for instruction format keys
-    instruction_keys = {"instruction", "output", "prompt", "response", "input"}
+    instruction_keys = {"instruction", "output", "prompt", "response", "input", "question", "user_prompt"}
     if any(k in sample for k in instruction_keys):
         return SchemaType.INSTRUCTION
 
@@ -84,37 +86,37 @@ def validate_raw_sample(sample: Dict[str, Any]) -> List[str]:
 
     if schema_type == SchemaType.INSTRUCTION:
         # Check instruction / output fields
-        inst = sample.get("instruction") or sample.get("prompt")
-        out = sample.get("output") or sample.get("response")
+        inst = sample.get("instruction") or sample.get("prompt") or sample.get("user_prompt") or sample.get("question")
+        out = sample.get("output") or sample.get("response") or sample.get("target") or sample.get("answer")
 
         if inst is None or not isinstance(inst, str) or not inst.strip():
-            errors.append("Instruction format requires a non-empty string for 'instruction' or 'prompt'")
+            errors.append("Instruction format requires a non-empty string for instruction/prompt")
 
         if out is None or not isinstance(out, str) or not out.strip():
-            errors.append("Instruction format requires a non-empty string for 'output' or 'response'")
+            errors.append("Instruction format requires a non-empty string for output/response")
 
     elif schema_type == SchemaType.CONVERSATIONAL:
-        messages = sample.get("messages")
+        messages = sample.get("messages") or sample.get("conversations")
         if not isinstance(messages, list) or len(messages) == 0:
-            errors.append("Conversational format requires a non-empty 'messages' list")
+            errors.append("Conversational format requires a non-empty 'messages' or 'conversations' list")
         else:
-            valid_roles = {"user", "assistant", "system"}
+            valid_roles = {"user", "assistant", "system", "human", "gpt", "bot"}
             has_assistant_response = False
             for idx, msg in enumerate(messages):
                 if not isinstance(msg, dict):
                     errors.append(f"Message at index {idx} must be a dictionary")
                     continue
-                role = msg.get("role")
-                content = msg.get("content")
+                raw_role = str(msg.get("role") or msg.get("from") or "").strip().lower()
+                content = msg.get("content") or msg.get("value")
 
-                if role not in valid_roles:
-                    errors.append(f"Invalid message role '{role}' at index {idx}. Allowed: {valid_roles}")
+                if raw_role not in valid_roles:
+                    errors.append(f"Invalid message role '{raw_role}' at index {idx}. Allowed: {valid_roles}")
                 if not isinstance(content, str) or not content.strip():
-                    errors.append(f"Empty content for message role '{role}' at index {idx}")
-                if role == "assistant" and isinstance(content, str) and content.strip():
+                    errors.append(f"Empty content for message role '{raw_role}' at index {idx}")
+                if raw_role in ("assistant", "gpt", "bot") and isinstance(content, str) and content.strip():
                     has_assistant_response = True
 
             if not has_assistant_response:
-                errors.append("Conversational messages must include at least one valid 'assistant' response")
+                errors.append("Conversational messages must include at least one valid assistant/gpt response")
 
     return errors
