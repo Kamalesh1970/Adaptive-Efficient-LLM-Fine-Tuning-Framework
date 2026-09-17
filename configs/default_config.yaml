@@ -1,0 +1,54 @@
+# Default Configuration for Adaptive Efficient LLM Fine-Tuning Framework
+
+model:
+  name_or_path: "meta-llama/Llama-2-7b-hf"
+  torch_dtype: "float16"
+  trust_remote_code: false
+  use_cache: false
+
+quantization:
+  enabled: true
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: true
+
+lora:
+  enabled: true
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  target_modules:
+    - "q_proj"
+    - "v_proj"
+    - "k_proj"
+    - "o_proj"
+
+training:
+  output_dir: "./outputs"
+  num_train_epochs: 3
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  weight_decay: 0.001
+  warmup_ratio: 0.03
+  logging_steps: 10
+  save_strategy: "steps"
+  save_steps: 100
+  evaluation_strategy: "no"
+  fp16: true
+  bf16: false
+  max_grad_norm: 0.3
+  seed: 42
+
+hardware:
+  max_memory_gb: 16.0
+  fallback_to_cpu: false
+  allow_tf32: true
+
+adaptive:
+  auto_configure: true
+  memory_headroom_gb: 2.0
+  optimization_target: "balanced"  # Options: speed, memory, balanced

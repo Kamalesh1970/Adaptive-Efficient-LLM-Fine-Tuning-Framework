@@ -1,0 +1,1 @@
+"""Web visual dashboard components."""
