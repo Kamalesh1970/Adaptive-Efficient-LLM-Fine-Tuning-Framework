@@ -1,12 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ModelCard } from './ModelCard';
 import { DatasetCard } from './DatasetCard';
 import { ParametersCard } from './ParametersCard';
 import { ConfigToolbar } from './ConfigToolbar';
 import { RunPreviewPanel } from './RunPreviewPanel';
 import { AlertBanner } from '../../components/common/AlertBanner';
-import { TrainingConfig, SystemStatus, ValidationResult } from '../../types/training';
-import { fetchDefaultConfig, validateConfig } from '../../services/api';
+import { 
+  TrainingConfig, 
+  SystemStatus, 
+  ValidationResult,
+  ModelMetadata,
+  ModelValidationResponse
+} from '../../types/training';
+import { 
+  fetchDefaultConfig, 
+  validateConfig, 
+  fetchModelCatalog, 
+  validateModelSelection 
+} from '../../services/api';
 
 interface TrainingPageProps {
   systemStatus: SystemStatus | null;
@@ -39,6 +50,32 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
   const [isResetting, setIsResetting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Phase 1 Model Catalog & Validation state
+  const [catalog, setCatalog] = useState<ModelMetadata[]>([]);
+  const [isLoadingCatalog, setIsLoadingCatalog] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [modelValidation, setModelValidation] = useState<ModelValidationResponse | null>(null);
+  const [isValidatingModel, setIsValidatingModel] = useState(false);
+  const [hfToken, setHfToken] = useState<string>('');
+
+  // Load model catalog from backend
+  const loadCatalog = useCallback(async () => {
+    setIsLoadingCatalog(true);
+    setCatalogError(null);
+    try {
+      const res = await fetchModelCatalog();
+      setCatalog(res.models);
+    } catch {
+      setCatalogError('Could not load model catalog from backend. Operating with fallback registry.');
+    } finally {
+      setIsLoadingCatalog(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCatalog();
+  }, [loadCatalog]);
+
   // Initialize defaults from backend on mount
   useEffect(() => {
     let isMounted = true;
@@ -60,10 +97,10 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
     };
   }, []);
 
-  // Validate configuration whenever config changes
+  // Validate entire training configuration whenever config changes
   useEffect(() => {
     let isMounted = true;
-    async function runValidation() {
+    async function runConfigValidation() {
       try {
         const res = await validateConfig(config);
         if (isMounted) {
@@ -88,11 +125,72 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
         }
       }
     }
-    runValidation();
+    runConfigValidation();
     return () => {
       isMounted = false;
     };
   }, [config]);
+
+  // Validate specific model selection and method compatibility
+  useEffect(() => {
+    let isMounted = true;
+    if (!config.model_identifier) {
+      setModelValidation(null);
+      return;
+    }
+
+    async function runModelValidation() {
+      setIsValidatingModel(true);
+      try {
+        const res = await validateModelSelection({
+          model_id: config.model_identifier!,
+          training_method: config.training_method,
+          hf_token: hfToken.trim() || undefined,
+          context_length: config.context_length,
+        });
+        if (isMounted) {
+          setModelValidation(res);
+        }
+      } catch {
+        if (isMounted) {
+          // Offline fallback validation
+          const selected = catalog.find((m) => m.id === config.model_identifier);
+          if (selected) {
+            const isSupported = selected.supported_methods.includes(config.training_method);
+            const needsToken = selected.is_gated && !hfToken.trim() && config.hf_token_status !== 'present_in_env';
+            setModelValidation({
+              is_valid: isSupported && !needsToken,
+              model_id: selected.id,
+              training_method: config.training_method,
+              compatibility_status: !isSupported 
+                ? 'incompatible' 
+                : needsToken 
+                ? 'requires_credentials' 
+                : 'compatible',
+              errors: !isSupported 
+                ? [`Model '${selected.id}' does not support method '${config.training_method}'`] 
+                : needsToken 
+                ? ['Gated model requires Hugging Face access token'] 
+                : [],
+              warnings: ['Backend offline: local compatibility verification only'],
+              model: selected,
+              token_status: hfToken.trim() ? 'configured_unverified' : 'not_provided',
+              details: {},
+            });
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setIsValidatingModel(false);
+        }
+      }
+    }
+
+    runModelValidation();
+    return () => {
+      isMounted = false;
+    };
+  }, [config.model_identifier, config.training_method, config.context_length, hfToken, config.hf_token_status, catalog]);
 
   const handleUpdateConfig = (updates: Partial<TrainingConfig>) => {
     setConfig((prev) => ({ ...prev, ...updates }));
@@ -103,6 +201,7 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
     try {
       const defaults = await fetchDefaultConfig();
       setConfig(defaults);
+      setHfToken('');
     } catch {
       // Fallback reset
       setConfig({
@@ -121,10 +220,13 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
         advanced_enabled: false,
         hf_token_status: 'not_detected',
       });
+      setHfToken('');
     } finally {
       setIsResetting(false);
     }
   };
+
+  const selectedModel = catalog.find((m) => m.id === config.model_identifier) || null;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6" data-testid="training-page">
@@ -159,7 +261,18 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
         {/* Left / Central Configuration Area */}
         <div className="flex-1 space-y-6 w-full">
           {/* 1. Model Selection Card */}
-          <ModelCard config={config} onChange={handleUpdateConfig} />
+          <ModelCard 
+            config={config} 
+            onChange={handleUpdateConfig}
+            catalog={catalog}
+            isLoadingCatalog={isLoadingCatalog}
+            catalogError={catalogError}
+            onRetryCatalog={loadCatalog}
+            modelValidation={modelValidation}
+            isValidatingModel={isValidatingModel}
+            hfToken={hfToken}
+            onHfTokenChange={setHfToken}
+          />
 
           {/* 2. Dataset Selection Card */}
           <DatasetCard config={config} onChange={handleUpdateConfig} />
@@ -174,8 +287,11 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
           systemStatus={systemStatus}
           backendOnline={backendOnline}
           validationResult={validationResult}
+          selectedModel={selectedModel}
+          modelValidation={modelValidation}
+          hfToken={hfToken}
           onStartTraining={() => {
-            alert('Phase 0 Notice: Model training execution engine will be implemented in Phase 4.');
+            alert('Phase 1 Notice: Model compatibility verified. Execution engine will be implemented in Phase 4.');
           }}
         />
       </div>

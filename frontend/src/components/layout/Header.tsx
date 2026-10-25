@@ -27,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-studio-text tracking-tight">Train</h1>
-            <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-studio-card border border-studio-border text-studio-muted">
+            <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-studio-card border border-studio-border text-studio-muted">
               Draft Configuration
             </span>
           </div>

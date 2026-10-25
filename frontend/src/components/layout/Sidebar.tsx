@@ -15,6 +15,8 @@ interface SidebarProps {
   backendOnline: boolean;
   activeNav?: string;
   onSelectNav?: (nav: string) => void;
+  onOpenPrivacy?: () => void;
+  onOpenTerms?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -22,6 +24,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   backendOnline,
   activeNav = 'new-training',
   onSelectNav,
+  onOpenPrivacy,
+  onOpenTerms,
 }) => {
   const navItems = [
     { id: 'new-training', label: 'New Training', icon: PlusCircle, active: true },
@@ -40,7 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Brand / Logo */}
         <div className="p-4 border-b border-studio-border/60">
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-studio-accent to-studio-teal flex items-center justify-center text-studio-bg shadow-sm shadow-studio-accent/20">
+            <div className="w-8 h-8 rounded-md bg-studio-card border border-studio-border flex items-center justify-center text-studio-accent shadow-xs">
               <Sparkles className="w-4 h-4 stroke-[2.5]" />
             </div>
             <div>
@@ -69,7 +73,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => onSelectNav?.(item.id)}
                 className={`w-full flex items-center space-x-2.5 px-3 py-2 rounded-md text-xs font-medium transition-all ${
                   isSelected
-                    ? 'bg-studio-accent/10 text-studio-accent border border-studio-accent/30 shadow-sm shadow-studio-accent/10 font-semibold'
+                    ? 'bg-studio-accent/10 text-studio-accent border border-studio-accent/30 shadow-xs font-semibold'
                     : 'text-studio-muted hover:text-studio-text hover:bg-studio-card/60 border border-transparent'
                 }`}
                 data-testid={`nav-${item.id}`}
@@ -86,7 +90,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Backend & Environment Status Footer */}
-      <div className="p-3 border-t border-studio-border/60 bg-studio-bg/50">
+      <div className="p-3 border-t border-studio-border/60 bg-studio-bg/50 space-y-2">
         <div className="rounded-lg p-2.5 bg-studio-card border border-studio-border text-xs space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] text-studio-muted flex items-center gap-1">
@@ -109,13 +113,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {backendOnline && systemStatus ? (
               <div className="space-y-0.5">
                 <div className="text-studio-text font-mono text-[10px] truncate">
-                  Py {systemStatus.python_version} • {systemStatus.cuda_available ? (systemStatus.primary_gpu_name || 'CUDA GPU') : 'CPU Mode'}
+                  Py {systemStatus.python_version} - {systemStatus.cuda_available ? (systemStatus.primary_gpu_name || 'CUDA GPU') : 'CPU Mode'}
                 </div>
               </div>
             ) : (
               <span className="text-amber-400/90 text-[10px]">FastAPI server unreachable</span>
             )}
           </div>
+        </div>
+
+        {/* Legal & Policy Links */}
+        <div className="flex items-center justify-between px-1 text-[10px] text-studio-muted/80">
+          <button
+            onClick={onOpenPrivacy}
+            className="hover:text-studio-accent transition-colors underline-offset-2 hover:underline"
+            data-testid="link-privacy"
+          >
+            Privacy Policy
+          </button>
+          <span>-</span>
+          <button
+            onClick={onOpenTerms}
+            className="hover:text-studio-accent transition-colors underline-offset-2 hover:underline"
+            data-testid="link-terms"
+          >
+            Terms & Conditions
+          </button>
         </div>
       </div>
     </aside>

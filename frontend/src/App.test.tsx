@@ -78,6 +78,10 @@ describe('Adaptive LLM Fine-Tuning Studio - Phase 0 UI Skeleton', () => {
     expect(screen.getByTestId('nav-history')).toBeInTheDocument();
     expect(screen.getByTestId('nav-settings')).toBeInTheDocument();
 
+    // Legal links
+    expect(screen.getByTestId('link-privacy')).toBeInTheDocument();
+    expect(screen.getByTestId('link-terms')).toBeInTheDocument();
+
     // Verify backend status indicator
     await waitFor(() => {
       expect(screen.getByTestId('backend-status-badge')).toHaveTextContent('Connected');
@@ -177,6 +181,48 @@ describe('Adaptive LLM Fine-Tuning Studio - Phase 0 UI Skeleton', () => {
     // Button MUST remain disabled in Phase 0
     const startBtn = screen.getByTestId('btn-start-training');
     expect(startBtn).toBeDisabled();
+  });
+
+  it('renders Privacy Policy page when clicked and returns to studio view', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('link-privacy'));
+    });
+
+    const page = screen.getByTestId('privacy-policy-page');
+    expect(page).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Privacy Policy' })).toBeInTheDocument();
+
+    // Return back to studio
+    await act(async () => {
+      fireEvent.click(screen.getByText('Back to Studio'));
+    });
+
+    expect(screen.getByTestId('training-page')).toBeInTheDocument();
+  });
+
+  it('renders Terms and Conditions page when clicked and returns to studio view', async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('link-terms'));
+    });
+
+    const page = screen.getByTestId('terms-conditions-page');
+    expect(page).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Terms and Conditions' })).toBeInTheDocument();
+
+    // Return back to studio
+    await act(async () => {
+      fireEvent.click(screen.getByText('Back to Studio'));
+    });
+
+    expect(screen.getByTestId('training-page')).toBeInTheDocument();
   });
 
   it('handles backend offline status gracefully without throwing', async () => {

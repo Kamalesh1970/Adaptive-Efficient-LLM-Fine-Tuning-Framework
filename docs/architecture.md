@@ -8,56 +8,59 @@ Can a resource-aware adaptive fine-tuning framework automatically select trainin
 
 ```text
 adaptive-llm-finetuning/
-├── core/                  # Configuration, logging, exceptions, seed reproducibility, system status
-│   ├── lora/              # [Planned] LoRA parameter wrappers
-│   ├── qlora/             # [Planned] QLoRA quantized low-rank adaptation
-│   ├── quantization/      # [Planned] Base model quantization wrappers
-│   └── training/          # [Planned] Execution loops
-├── intelligence/          # Adaptive Intelligence Layer
-│   ├── dataset/           # Dataset & Tokenization Pipeline (Phase 1)
-│   │   ├── loader.py      # Abstract loader for JSON, JSONL, CSV, and HF Datasets
-│   │   ├── schema.py      # Schema type detection (Instruction, Conversational) & validation
-│   │   ├── normalizer.py  # Unified NormalizedSample mapper
-│   │   ├── cleaner.py     # SHA-256 duplicate detector & sample cleaner
-│   │   ├── tokenizer.py   # TokenizerWrapper & MockTokenizer
-│   │   ├── analyzer.py    # Sequence length & estimated padding efficiency analyzer
-│   │   ├── profile.py     # DatasetProfile dataclass (JSON serializable)
-│   │   └── pipeline.py    # End-to-end DatasetPipeline orchestrator
-│   ├── hardware/          # [Planned] Hardware profiler
-│   ├── memory/            # [Planned] Memory estimation engine
-│   └── configuration/     # [Planned] Strategy selector
-├── evaluation/            # [Planned] Metrics & benchmarking framework
-├── models/                # [Planned] Model registry
-├── datasets/              # Dataset storage
-├── dashboard/             # [Planned] Monitoring dashboard
-├── deployment/            # [Planned] Exporter modules
-└── tests/                 # Unit & integration test suite
+├── backend/                   # FastAPI Backend Application
+│   ├── app/
+│   │   ├── api/routes.py      # REST API endpoints (/health, /system/status, /models/*, /training/*)
+│   │   ├── schemas/           # Pydantic data models (models.py, training.py, system.py)
+│   │   └── services/          # Business logic & catalogs (model_catalog.py, config_service.py)
+│   └── tests/                 # Backend test suite (test_models.py, test_config.py, test_system.py)
+├── frontend/                  # Vite + React 18 + TypeScript + Tailwind Studio UI
+│   └── src/
+│       ├── features/training/ # ModelCard, DatasetCard, ParametersCard, RunPreviewPanel
+│       └── services/api.ts    # Typed fetch client
+├── core/                      # Configuration, logging, exceptions, seed reproducibility, system status
+│   ├── lora/                  # [Planned] LoRA parameter wrappers
+│   ├── qlora/                 # [Planned] QLoRA quantized low-rank adaptation
+│   ├── quantization/          # [Planned] Base model quantization wrappers
+│   └── training/              # [Planned] Execution loops
+├── intelligence/              # Adaptive Intelligence Layer
+│   ├── dataset/               # Dataset & Tokenization Pipeline
+│   ├── hardware/              # [Planned] Hardware profiler (Phase 2)
+│   ├── memory/                # [Planned] Memory estimation engine (Phase 2)
+│   └── configuration/         # [Planned] Strategy selector (Phase 3)
+├── evaluation/                # [Planned] Metrics & benchmarking framework (Phase 5)
+├── models/                    # Model registry and helper loaders
+├── datasets/                  # Dataset storage
+└── tests/                     # Foundation & pipeline test suite
 ```
 
-## Dataset & Tokenization Pipeline Flow (Phase 1)
+## Phase 1: Model Selection & Compatibility Layer
+
+### Flow Overview
 
 ```text
-Raw Dataset (JSON/JSONL/CSV/HF)
-           ↓
-    DatasetLoader
-           ↓
-    Schema Detection & Validation
-           ↓
-    DatasetNormalizer (NormalizedSample)
-           ↓
-    DatasetCleaner (Deduplication via SHA-256)
-           ↓
-    TokenizerWrapper (TokenizedSample)
-           ↓
-    SequenceAnalyzer (Lengths, Bins, Padding Waste)
-           ↓
-    DatasetProfile (JSON Output)
+User Selects Model & Fine-Tuning Method
+                   ↓
+   Frontend React Client (ModelCard)
+                   ↓
+POST /api/models/validate (Payload: model_id, method, optional token)
+                   ↓
+      ModelCatalogService Lookup
+                   ↓
+     ├── 1. Identifier Check (known, non-empty)
+     ├── 2. Method Validation (lora, qlora, full_finetuning)
+     ├── 3. Architecture Compatibility Rule Evaluation
+     ├── 4. Gated Access & In-Memory Token Evaluation
+     └── 5. Context Length Verification
+                   ↓
+     ModelValidationResponse (Status, Errors, Warnings, Details)
+                   ↓
+UI Feedback & Persistent Run Preview Update
 ```
 
-## Phase 1 Design Principles
+### Core Design Principles
 
-1. **Format Agnostic Input**: Loads JSON, JSONL, CSV, or Hugging Face dataset objects seamlessly.
-2. **Deterministic Normalization**: Standardizes instruction (`instruction`, `input`, `output`) and conversational (`messages`) schemas into `NormalizedSample`.
-3. **Traceable Cleaning**: Non-destructive cleaning with exact statistics on original count, invalid samples, duplicate count, and clean count.
-4. **Offline Testability**: Includes `MockTokenizer` to enable full pipeline testing without downloading external model weights.
-5. **Structured Profiling**: Produces a JSON-serializable `DatasetProfile` recording sample count, token count, percentiles, binned distribution, and padding waste ratio.
+1. **Separation of Metadata and Execution**: Model definitions contain validated architectural specifications without executing weight downloads or CUDA allocations in this phase.
+2. **Explicit Verification Standards**: Metadata that has not been verified against empirical sources is explicitly labeled as `unverified` / `None` rather than fabricated.
+3. **No Secret Leakage**: Access tokens are kept masked in UI memory, never saved to browser storage, and never echoed back in API responses, logs, or error stack traces.
+4. **Offline Testability**: All model catalog lookups and validation endpoints run entirely offline with mocked data and unit tests.

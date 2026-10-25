@@ -6,29 +6,46 @@ import {
   Clock, 
   Sparkles, 
   AlertTriangle,
-  Lock
+  Lock,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
 import { Badge } from '../../components/common/Badge';
-import { TrainingConfig, SystemStatus, ValidationResult } from '../../types/training';
+import { 
+  TrainingConfig, 
+  SystemStatus, 
+  ValidationResult,
+  ModelMetadata,
+  ModelValidationResponse
+} from '../../types/training';
 
 interface RunPreviewPanelProps {
   config: TrainingConfig;
   systemStatus: SystemStatus | null;
   backendOnline: boolean;
   validationResult: ValidationResult | null;
+  selectedModel?: ModelMetadata | null;
+  modelValidation?: ModelValidationResponse | null;
+  selectedDatasetReport?: DatasetValidationReport | null;
+  splitResult?: DatasetSplitResult | null;
+  hfToken?: string;
   onStartTraining?: () => void;
 }
+
 
 export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
   config,
   systemStatus,
   backendOnline,
   validationResult,
+  selectedModel,
+  modelValidation,
+  hfToken = '',
   onStartTraining,
 }) => {
   const hasModel = Boolean(config.model_identifier);
   const hasDataset = Boolean(config.dataset_reference);
-  const isReady = Boolean(validationResult?.is_ready_for_training); // Strictly false in Phase 0
+  const isReady = Boolean(validationResult?.is_ready_for_training); // Strictly false in Phase 0 & Phase 1
 
   const methodLabels: Record<string, string> = {
     lora: 'LoRA (16-bit)',
@@ -48,7 +65,9 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
       : 'N/A (CPU Mode)'
     : 'Unavailable';
 
-  const hasHfToken = config.hf_token_status === 'present_in_env';
+  const hasEnvToken = config.hf_token_status === 'present_in_env';
+  const hasInMemoryToken = Boolean(hfToken && hfToken.trim());
+  const hasHfToken = hasInMemoryToken || hasEnvToken;
 
   return (
     <div
@@ -81,9 +100,36 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
             </span>
             <div className="text-right">
               {hasModel ? (
-                <span className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block" title={config.model_identifier!}>
-                  {config.model_identifier}
-                </span>
+                <div>
+                  <span 
+                    className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block font-medium" 
+                    title={config.model_identifier!}
+                  >
+                    {config.model_identifier}
+                  </span>
+                  {selectedModel && (
+                    <span className="text-[10px] text-studio-muted font-mono block">
+                      {selectedModel.parameter_count || 'Unknown size'} • {selectedModel.family || 'Unknown'}
+                    </span>
+                  )}
+                  {modelValidation && (
+                    <div className="mt-0.5">
+                      {modelValidation.is_valid ? (
+                        <span className="text-[10px] text-emerald-400 font-mono inline-flex items-center gap-0.5">
+                          <CheckCircle2 className="w-2.5 h-2.5" /> Compatible
+                        </span>
+                      ) : modelValidation.compatibility_status === 'requires_credentials' ? (
+                        <span className="text-[10px] text-amber-400 font-mono inline-flex items-center gap-0.5">
+                          <Lock className="w-2.5 h-2.5" /> Needs Token
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-rose-400 font-mono inline-flex items-center gap-0.5">
+                          <XCircle className="w-2.5 h-2.5" /> Incompatible
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <span className="text-amber-400 font-medium text-[11px]" data-testid="status-model-none">
                   None Selected
@@ -186,7 +232,7 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
             <div className="flex justify-between text-studio-text">
               <span className="text-studio-muted">HF Token:</span>
               <span className={hasHfToken ? 'text-emerald-400' : 'text-zinc-500'}>
-                {hasHfToken ? 'Active' : 'Not Set'}
+                {hasHfToken ? 'Configured (Unverified)' : 'Not Set'}
               </span>
             </div>
           </div>
@@ -210,7 +256,9 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               ? 'Select a model first'
               : !hasDataset
               ? 'Select a dataset first'
-              : 'Phase 0 UI Skeleton: Fine-tuning engine starts in Phase 4'
+              : modelValidation && !modelValidation.is_valid
+              ? 'Selected model/method configuration is incompatible or missing credentials'
+              : 'Phase 1 Model Compatibility: Execution engine scheduled for Phase 4'
           }
         >
           <Lock className="w-3.5 h-3.5 mr-1" />
@@ -220,10 +268,10 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
         <div className="p-2 rounded bg-studio-bg/60 border border-studio-border text-[10px] text-studio-muted leading-relaxed" data-testid="phase0-preview-notice">
           <p className="flex items-center gap-1 font-semibold text-studio-text">
             <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
-            Phase 0 Prototype
+            Phase 1 Compatibility Verification
           </p>
           <p className="mt-0.5">
-            The start button is disabled until models and datasets are selected. Actual ML execution loops will be enabled in Phase 4.
+            The start button is disabled until models and datasets are selected and validated. Actual ML execution loops will be enabled in Phase 4.
           </p>
         </div>
       </div>

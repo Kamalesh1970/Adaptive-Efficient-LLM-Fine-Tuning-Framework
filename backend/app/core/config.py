@@ -38,6 +38,15 @@ class AppSettings(BaseModel):
         ],
         description="Allowed CORS origins"
     )
+    dataset_upload_dir: str = Field(
+        default="datasets/uploads",
+        description="Directory to store uploaded datasets"
+    )
+    max_upload_size_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        description="Maximum dataset upload size in bytes (50MB)"
+    )
 
 
 settings = AppSettings()
+

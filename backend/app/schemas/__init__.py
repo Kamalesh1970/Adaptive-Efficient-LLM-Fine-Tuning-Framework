@@ -9,6 +9,25 @@ from backend.app.schemas.training import (
     TrainingConfigSchema,
     TrainingConfigValidationResult,
 )
+from backend.app.schemas.models import (
+    ModelVerificationStatus,
+    CompatibilityStatus,
+    ModelMetadata,
+    ModelCatalogResponse,
+    ModelValidationRequest,
+    ModelValidationResponse,
+)
+from backend.app.schemas.datasets import (
+    DatasetFormat,
+    DatasetSchemaType,
+    SampleValidationError,
+    DatasetValidationReport,
+    DatasetSummary,
+    DatasetListResponse,
+    DatasetSplitRequest,
+    DatasetSplitResult,
+    DatasetValidationRequest,
+)
 
 __all__ = [
     "HealthResponse",
@@ -18,4 +37,21 @@ __all__ = [
     "TrainingLengthType",
     "TrainingConfigSchema",
     "TrainingConfigValidationResult",
+    "ModelVerificationStatus",
+    "CompatibilityStatus",
+    "ModelMetadata",
+    "ModelCatalogResponse",
+    "ModelValidationRequest",
+    "ModelValidationResponse",
+    "DatasetFormat",
+    "DatasetSchemaType",
+    "SampleValidationError",
+    "DatasetValidationReport",
+    "DatasetSummary",
+    "DatasetListResponse",
+    "DatasetSplitRequest",
+    "DatasetSplitResult",
+    "DatasetValidationRequest",
 ]
+
+
