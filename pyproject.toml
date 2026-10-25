@@ -39,6 +39,6 @@ where = ["."]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --tb=short"
-testpaths = ["tests"]
+addopts = "-ra -q --tb=short -W ignore::starlette.exceptions.StarletteDeprecationWarning"
+testpaths = ["backend/tests", "tests"]
 pythonpath = ["."]
