@@ -129,8 +129,8 @@ export async function fetchDatasetSplits(
   seed = 42
 ): Promise<DatasetSplitResult> {
   const query = new URLSearchParams({
-    train_ratio: train_ratio.toString(),
-    eval_ratio: eval_ratio.toString(),
+    train_ratio: trainRatio.toString(),
+    eval_ratio: evalRatio.toString(),
     seed: seed.toString(),
   });
   return request<DatasetSplitResult>(`/datasets/${encodeURIComponent(datasetId)}/splits?${query.toString()}`);

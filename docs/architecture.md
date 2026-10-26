@@ -64,3 +64,53 @@ UI Feedback & Persistent Run Preview Update
 2. **Explicit Verification Standards**: Metadata that has not been verified against empirical sources is explicitly labeled as `unverified` / `None` rather than fabricated.
 3. **No Secret Leakage**: Access tokens are kept masked in UI memory, never saved to browser storage, and never echoed back in API responses, logs, or error stack traces.
 4. **Offline Testability**: All model catalog lookups and validation endpoints run entirely offline with mocked data and unit tests.
+
+---
+
+## Phase 2: Dataset Upload, Validation & Split Selection Layer
+
+### Flow Overview
+
+```text
+User Drag-and-Drops or Browses Dataset File (.json, .jsonl, .csv)
+                   ↓
+      Frontend Pre-Validation (Extension, Size < 50MB)
+                   ↓
+POST /api/datasets/upload (multipart/form-data)
+                   ↓
+           DatasetService
+                   ↓
+   ├── 1. Filename Sanitization & Path Traversal Prevention
+   ├── 2. Upload Size Limit Enforcement (< 50MB)
+   ├── 3. Unique Server-Side ID Generation (ds_<uuid>)
+   ├── 4. Extension & Format Extraction (JSON, JSONL, CSV)
+   ├── 5. Robust Format Parsing:
+   │       • JSON: Array or wrapped object {"data": [...]}
+   │       • JSONL: Line-by-line parsing with line-number error tracking
+   │       • CSV: CSV DictReader with header/row validation
+   ├── 6. Schema Detection:
+   │       • instruction: instruction + optional input + output
+   │       • text: text / content / prompt
+   │       • conversational: messages / conversations with role + content
+   ├── 7. Deterministic Normalization into internal sample representation
+   ├── 8. Duplicate Detection (SHA-256 fingerprinting)
+   └── 9. Validation Report Generation (errors, warnings, sample counts)
+                   ↓
+DatasetValidationReport JSON Response (no internal filesystem paths disclosed)
+                   ↓
+Frontend TrainingPage Updates Dataset State & Metrics Grid
+                   ↓
+Deterministic Split Selection (GET /api/datasets/{id}/splits)
+   ├── Disjoint train/eval sample sets (0% overlap guarantee)
+   └── Warns if sample count is insufficient for meaningful evaluation
+                   ↓
+RunPreviewPanel Reflects Verified Dataset, Schema & Disjoint Split Statistics
+```
+
+### Security & Integrity Standards
+
+1. **Path Traversal Protection**: User-supplied filenames are sanitized (`os.path.basename`) and stored strictly using server-generated identifiers (`ds_<uuid>`) under the dedicated data directory (`datasets/uploads/`).
+2. **Internal Path Masking**: Absolute server filesystem paths are never returned in client API responses or serialized error models.
+3. **Deterministic Disjoint Splitting**: Pseudo-random split generation with configurable seeds guarantees training and evaluation sets are non-overlapping with 0% data leakage.
+4. **No Arbitrary Code Execution**: Datasets are parsed purely as structured data records without eval or deserialization of executable code.
+

@@ -4,9 +4,9 @@ An adaptive, resource-aware Large Language Model (LLM) fine-tuning studio and tr
 
 Inspired by modern fine-tuning workflows (such as Unsloth), the Studio provides an ergonomic web dashboard paired with an adaptive ML backend designed to automatically select training strategies, quantization levels (e.g. QLoRA 4-bit NF4, LoRA), and memory configurations tailored to hardware constraints and dataset characteristics.
 
-> **Phase 1 Status: COMPLETED**  
-> Scope: Foundation Model Selection, Modular Catalog Registry, Fine-Tuning Method Compatibility Checks, Masked Hugging Face Credential Security, and UI Integration.  
-> *Notice: In Phase 1, model metadata querying and compatibility validation are live. Actual model weight downloads, GPU memory loading, dataset upload processing, and fine-tuning execution loops are planned for later phases.*
+> **Phase 2 Status: COMPLETED**  
+> Scope: Dataset Upload (JSON, JSONL, CSV), Robust Parsing, Multi-Format Schema Detection, Deterministic Normalization, Train/Eval Split Selection (0% Data Leakage Guarantee), and Training Studio UI Integration.  
+> *Notice: In Phase 2, dataset ingestion, validation, and split calculation are fully operational. Model training execution, LoRA/QLoRA loops, and hardware memory profiling are planned for subsequent phases.*
 
 ---
 
@@ -180,6 +180,54 @@ service.register_model(new_model)
 
 ---
 
+## Phase 2: Dataset Upload, Validation & Split Selection
+
+### 1. Supported File Formats
+
+The Studio backend and training interface support local upload and validation for three standardized structured formats:
+- **JSON (`.json`)**: Supports top-level JSON array of sample objects `[...]` or standard wrapped dictionaries containing sample lists (e.g. `{"data": [...]}`).
+- **JSON Lines (`.jsonl`)**: Validates every non-empty line independently as valid JSON, with exact line-number error reporting on syntax or schema errors.
+- **Comma-Separated Values (`.csv`)**: Validates CSV header structure and row formatting using Python's `csv.DictReader`.
+
+*Note: Unsupported file formats (such as `.parquet`, `.arrow`, or plain `.txt`) are strictly rejected with an informative HTTP 400 response specifying supported extensions.*
+
+### 2. Supported Fine-Tuning Schemas
+
+Uploaded datasets are automatically analyzed using structural heuristics to detect fine-tuning sample representations:
+- **Instruction Format (`instruction`)**:
+  - Requires `instruction` (string) and `output` / `response` (string).
+  - Optionally accepts `input` / `context` (string).
+- **Conversational Format (`conversational`)**:
+  - Requires `messages` or `conversations` (array of message objects).
+  - Each message object must contain `role` (`system`, `user`, `assistant`) and non-empty `content`.
+- **Text Format (`text`)**:
+  - Requires a single primary text field (`text`, `content`, or `prompt`).
+
+### 3. Normalization & Duplicate Detection
+
+- **Normalization**: Preserves source records while standardizing fields into a deterministic internal format, retaining 0-indexed sample references for error reporting.
+- **Duplicate Detection**: Computes SHA-256 fingerprints across serialized samples to count exact duplicate entries.
+
+### 4. Upload Security & Storage Configuration
+
+- **Storage Location**: Uploads are saved under `datasets/uploads/` (configurable via `AppSettings.dataset_upload_dir`), strictly isolated from public frontend assets.
+- **Path Traversal Prevention**: User filenames are sanitized using `os.path.basename` and stored under server-generated UUID identifiers (`ds_<uuid>`).
+- **File Size Limits**: Configurable upload threshold (default 50 MB / 52,428,800 bytes). Files exceeding the limit are rejected immediately.
+- **Data Protection**: Internal filesystem paths are never disclosed in API responses.
+
+### 5. Train / Evaluation Split Selection
+
+- **Disjoint Split Guarantee**: Generates non-overlapping training and evaluation splits using deterministic seeded shuffling (default seed: 42) ensuring **0% data leakage**.
+- **Minimum Size Safeguards**: Datasets with insufficient samples for meaningful evaluation (e.g. < 5 samples) display a visible UI warning rather than falsely claiming evaluation readiness.
+
+### 6. Phase 2 Known Limitations
+
+- **No Parquet Support**: Parquet and Arrow binary datasets are not supported in Phase 2.
+- **No Tokenization Pipeline**: Token counting and truncation are planned for Phase 3.
+- **No Training Loop**: Training execution is deferred to Phase 4.
+
+---
+
 ## Installation
 
 ### 1. Backend Setup
@@ -224,6 +272,11 @@ Endpoints:
 - Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
 - Health Endpoint: [http://localhost:8000/api/health](http://localhost:8000/api/health)
 - Models Catalog: [http://localhost:8000/api/models](http://localhost:8000/api/models)
+- Datasets Upload: `POST /api/datasets/upload`
+- Datasets List: `GET /api/datasets`
+- Dataset Details: `GET /api/datasets/{dataset_id}`
+- Dataset Validation: `POST /api/datasets/{dataset_id}/validate`
+- Dataset Splits: `GET /api/datasets/{dataset_id}/splits`
 
 ### 2. Start the Frontend Development Server
 
@@ -246,8 +299,11 @@ Open your browser at:
 Run all backend unit and integration tests:
 
 ```bash
-# Run quiet test summary
+# Run quiet test summary across full test suite
 pytest -q
+
+# Run specific Phase 2 dataset test suite
+pytest backend/tests/test_datasets.py -v
 
 # Run specific model catalog test suite
 pytest backend/tests/test_models.py -v
@@ -277,8 +333,8 @@ npm run build
 
 - [x] **Phase 0**: Project Foundation, FastAPI Backend Services, System Hardware Diagnostics, Training Configuration Schemas, and Dark-Themed Training UI Skeleton.
 - [x] **Phase 1**: Model Selection, Modular Catalog Registry, Fine-Tuning Method Compatibility Checks, Masked Hugging Face Credential Security, and UI Integration.
-- [ ] **Phase 2**: Real-time Hardware Profiling & VRAM Memory Estimation Engine.
-- [ ] **Phase 3**: Adaptive Strategy Selector & Automatic Hyperparameter Resolution.
+- [x] **Phase 2**: Dataset Upload (JSON, JSONL, CSV), Robust Validation, Multi-Schema Detection, Deterministic Normalization, Train/Eval Split Selection (0% Overlap Guarantee), and Training Studio UI Integration.
+- [ ] **Phase 3**: Real-time Hardware Profiling & VRAM Memory Estimation Engine / Strategy Selector.
 - [ ] **Phase 4**: Fine-Tuning Execution Engine (Hugging Face `transformers`, `peft` LoRA/QLoRA, `bitsandbytes` 4-bit NF4, streaming loss telemetry).
 - [ ] **Phase 5**: Evaluation Framework, Benchmark Suites, and Training History.
 - [ ] **Phase 6**: Model Exporter (LoRA merge, GGUF/vLLM export, and deployment).

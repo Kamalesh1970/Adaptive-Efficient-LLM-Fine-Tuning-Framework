@@ -10,13 +10,20 @@ import {
   SystemStatus, 
   ValidationResult,
   ModelMetadata,
-  ModelValidationResponse
+  ModelValidationResponse,
+  DatasetSummary,
+  DatasetValidationReport,
+  DatasetSplitResult
 } from '../../types/training';
 import { 
   fetchDefaultConfig, 
   validateConfig, 
   fetchModelCatalog, 
-  validateModelSelection 
+  validateModelSelection,
+  fetchDatasets,
+  uploadDatasetFile,
+  fetchDatasetReport,
+  fetchDatasetSplits
 } from '../../services/api';
 
 interface TrainingPageProps {
@@ -58,6 +65,17 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
   const [isValidatingModel, setIsValidatingModel] = useState(false);
   const [hfToken, setHfToken] = useState<string>('');
 
+  // Phase 2 Dataset Upload, Validation & Split state
+  const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
+  const [isLoadingDatasets, setIsLoadingDatasets] = useState(false);
+  const [selectedDatasetReport, setSelectedDatasetReport] = useState<DatasetValidationReport | null>(null);
+  const [isUploadingDataset, setIsUploadingDataset] = useState(false);
+  const [datasetUploadError, setDatasetUploadError] = useState<string | null>(null);
+  const [datasetUploadSuccess, setDatasetUploadSuccess] = useState(false);
+  const [splitResult, setSplitResult] = useState<DatasetSplitResult | null>(null);
+  const [trainRatio, setTrainRatio] = useState<number>(0.9);
+  const [evalRatio, setEvalRatio] = useState<number>(0.1);
+
   // Load model catalog from backend
   const loadCatalog = useCallback(async () => {
     setIsLoadingCatalog(true);
@@ -72,9 +90,23 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
     }
   }, []);
 
+  // Load datasets list from backend
+  const loadDatasets = useCallback(async () => {
+    setIsLoadingDatasets(true);
+    try {
+      const res = await fetchDatasets();
+      setDatasets(res.datasets);
+    } catch {
+      // Offline fallback
+    } finally {
+      setIsLoadingDatasets(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadCatalog();
-  }, [loadCatalog]);
+    loadDatasets();
+  }, [loadCatalog, loadDatasets]);
 
   // Initialize defaults from backend on mount
   useEffect(() => {
@@ -192,6 +224,75 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
     };
   }, [config.model_identifier, config.training_method, config.context_length, hfToken, config.hf_token_status, catalog]);
 
+  // Handle file upload
+  const handleUploadDatasetFile = async (file: File) => {
+    setIsUploadingDataset(true);
+    setDatasetUploadError(null);
+    setDatasetUploadSuccess(false);
+
+    try {
+      const report = await uploadDatasetFile(file);
+      setSelectedDatasetReport(report);
+      setDatasetUploadSuccess(true);
+      setConfig((prev) => ({ ...prev, dataset_reference: report.dataset_id }));
+
+      // Refresh datasets list
+      await loadDatasets();
+
+      // Compute initial splits if dataset has valid samples
+      if (report.valid_sample_count > 0) {
+        try {
+          const splits = await fetchDatasetSplits(report.dataset_id, trainRatio, evalRatio);
+          setSplitResult(splits);
+        } catch {
+          // Non-blocking
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Dataset upload failed';
+      setDatasetUploadError(msg);
+    } finally {
+      setIsUploadingDataset(false);
+    }
+  };
+
+  // Handle selecting an existing dataset
+  const handleSelectDataset = async (datasetId: string) => {
+    if (!datasetId) {
+      setSelectedDatasetReport(null);
+      setSplitResult(null);
+      return;
+    }
+    try {
+      const report = await fetchDatasetReport(datasetId);
+      setSelectedDatasetReport(report);
+      if (report.valid_sample_count > 0) {
+        try {
+          const splits = await fetchDatasetSplits(datasetId, trainRatio, evalRatio);
+          setSplitResult(splits);
+        } catch {
+          // Non-blocking
+        }
+      }
+    } catch {
+      // Offline fallback
+    }
+  };
+
+  // Handle split change
+  const handleSplitChange = async (tRatio: number, eRatio: number) => {
+    setTrainRatio(tRatio);
+    setEvalRatio(eRatio);
+    if (config.dataset_reference && selectedDatasetReport?.valid_sample_count) {
+      try {
+        const splits = await fetchDatasetSplits(config.dataset_reference, tRatio, eRatio);
+        setSplitResult(splits);
+      } catch {
+        // Non-blocking
+      }
+    }
+  };
+
   const handleUpdateConfig = (updates: Partial<TrainingConfig>) => {
     setConfig((prev) => ({ ...prev, ...updates }));
   };
@@ -202,6 +303,10 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
       const defaults = await fetchDefaultConfig();
       setConfig(defaults);
       setHfToken('');
+      setSelectedDatasetReport(null);
+      setSplitResult(null);
+      setDatasetUploadError(null);
+      setDatasetUploadSuccess(false);
     } catch {
       // Fallback reset
       setConfig({
@@ -221,6 +326,8 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
         hf_token_status: 'not_detected',
       });
       setHfToken('');
+      setSelectedDatasetReport(null);
+      setSplitResult(null);
     } finally {
       setIsResetting(false);
     }
@@ -275,7 +382,24 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
           />
 
           {/* 2. Dataset Selection Card */}
-          <DatasetCard config={config} onChange={handleUpdateConfig} />
+          <DatasetCard 
+            config={config} 
+            onChange={handleUpdateConfig}
+            datasets={datasets}
+            isLoadingDatasets={isLoadingDatasets}
+            selectedReport={selectedDatasetReport}
+            onUploadFile={handleUploadDatasetFile}
+
+            isUploading={isUploadingDataset}
+            uploadError={datasetUploadError}
+            uploadSuccess={datasetUploadSuccess}
+            onSelectDataset={handleSelectDataset}
+            splitResult={splitResult}
+            trainRatio={trainRatio}
+            evalRatio={evalRatio}
+            onSplitChange={handleSplitChange}
+            backendOnline={backendOnline}
+          />
 
           {/* 3. Parameters Card */}
           <ParametersCard config={config} onChange={handleUpdateConfig} />
@@ -289,9 +413,11 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
           validationResult={validationResult}
           selectedModel={selectedModel}
           modelValidation={modelValidation}
+          selectedDatasetReport={selectedDatasetReport}
+          splitResult={splitResult}
           hfToken={hfToken}
           onStartTraining={() => {
-            alert('Phase 1 Notice: Model compatibility verified. Execution engine will be implemented in Phase 4.');
+            alert('Phase 2 Notice: Dataset validated and splits configured. Execution engine scheduled for Phase 4.');
           }}
         />
       </div>

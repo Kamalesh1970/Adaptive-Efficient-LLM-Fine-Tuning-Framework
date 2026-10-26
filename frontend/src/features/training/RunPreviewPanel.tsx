@@ -16,7 +16,9 @@ import {
   SystemStatus, 
   ValidationResult,
   ModelMetadata,
-  ModelValidationResponse
+  ModelValidationResponse,
+  DatasetValidationReport,
+  DatasetSplitResult
 } from '../../types/training';
 
 interface RunPreviewPanelProps {
@@ -40,12 +42,14 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
   validationResult,
   selectedModel,
   modelValidation,
+  selectedDatasetReport,
+  splitResult,
   hfToken = '',
   onStartTraining,
 }) => {
   const hasModel = Boolean(config.model_identifier);
   const hasDataset = Boolean(config.dataset_reference);
-  const isReady = Boolean(validationResult?.is_ready_for_training); // Strictly false in Phase 0 & Phase 1
+  const isReady = Boolean(validationResult?.is_ready_for_training); // Strictly false in Phase 0, 1 & 2
 
   const methodLabels: Record<string, string> = {
     lora: 'LoRA (16-bit)',
@@ -145,9 +149,34 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
             </span>
             <div className="text-right">
               {hasDataset ? (
-                <span className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block" title={config.dataset_reference!}>
-                  {config.dataset_reference}
-                </span>
+                <div>
+                  <span className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block font-medium" title={config.dataset_reference!}>
+                    {selectedDatasetReport ? selectedDatasetReport.original_filename : config.dataset_reference}
+                  </span>
+                  {selectedDatasetReport && (
+                    <span className="text-[10px] text-studio-muted font-mono block">
+                      {selectedDatasetReport.valid_sample_count} valid • {selectedDatasetReport.detected_schema || 'unknown'}
+                    </span>
+                  )}
+                  {splitResult && (
+                    <span className="text-[10px] text-studio-teal font-mono block">
+                      Splits: {splitResult.train_count} train / {splitResult.eval_count} eval
+                    </span>
+                  )}
+                  {selectedDatasetReport && (
+                    <div className="mt-0.5">
+                      {selectedDatasetReport.is_valid ? (
+                        <span className="text-[10px] text-emerald-400 font-mono inline-flex items-center gap-0.5">
+                          <CheckCircle2 className="w-2.5 h-2.5" /> Validated
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-rose-400 font-mono inline-flex items-center gap-0.5">
+                          <XCircle className="w-2.5 h-2.5" /> Invalid Dataset
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               ) : (
                 <span className="text-amber-400 font-medium text-[11px]" data-testid="status-dataset-none">
                   None Selected
@@ -155,6 +184,7 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               )}
             </div>
           </div>
+
 
           {/* Fine-Tuning Method */}
           <div className="flex items-center justify-between py-1 border-b border-studio-border/30">

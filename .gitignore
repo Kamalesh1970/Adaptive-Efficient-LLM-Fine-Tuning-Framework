@@ -67,5 +67,6 @@ models/*
 !models/.gitkeep
 datasets/*
 !datasets/.gitkeep
+backend/datasets/
 logs/
 *.log
