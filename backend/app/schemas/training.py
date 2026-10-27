@@ -225,6 +225,26 @@ class TrainingConfigSchema(BaseModel):
         default="nf4",
         description="Quantization preference (nf4, fp4, int8, none)"
     )
+    load_in_4bit: bool = Field(
+        default=True,
+        description="Whether to load base model in 4-bit precision for QLoRA"
+    )
+    load_in_8bit: bool = Field(
+        default=False,
+        description="Whether to load base model in 8-bit precision"
+    )
+    bnb_4bit_quant_type: str = Field(
+        default="nf4",
+        description="4-bit quantization data format ('nf4' or 'fp4')"
+    )
+    bnb_4bit_use_double_quant: bool = Field(
+        default=True,
+        description="Whether to use nested/double quantization to compress quantization constants"
+    )
+    bnb_4bit_compute_dtype: str = Field(
+        default="fp16",
+        description="Compute precision dtype for 4-bit weights ('fp16', 'bf16', 'float32')"
+    )
 
     # UI / Security State
     advanced_enabled: bool = Field(
@@ -498,8 +518,24 @@ class TrainingConfigSchema(BaseModel):
         if self.training_method == TrainingMethod.QLORA:
             if not self.quantization_type or self.quantization_type == "none":
                 raise ValueError("QLoRA requires an explicit quantization preference (e.g. 'nf4', 'fp4', or 'int8')")
+            if self.load_in_4bit and self.load_in_8bit:
+                raise ValueError("load_in_4bit and load_in_8bit cannot both be enabled simultaneously")
+            if self.bnb_4bit_quant_type.lower() not in ("nf4", "fp4"):
+                raise ValueError(f"Unsupported 4-bit quantization type '{self.bnb_4bit_quant_type}'. Must be 'nf4' or 'fp4'.")
+            if self.bnb_4bit_compute_dtype.lower() not in ("fp16", "bf16", "float16", "float32", "bfloat16"):
+                raise ValueError(f"Unsupported compute dtype '{self.bnb_4bit_compute_dtype}'.")
 
         return self
+
+    def to_quantization_dict(self) -> Dict[str, Any]:
+        """Serializes quantization configuration for artifacts and status reporting."""
+        return {
+            "load_in_4bit": self.load_in_4bit,
+            "load_in_8bit": self.load_in_8bit,
+            "bnb_4bit_quant_type": self.bnb_4bit_quant_type,
+            "bnb_4bit_use_double_quant": self.bnb_4bit_use_double_quant,
+            "bnb_4bit_compute_dtype": self.bnb_4bit_compute_dtype,
+        }
 
 
 class TrainingConfigValidationResult(BaseModel):
@@ -582,6 +618,7 @@ class TrainingRunResponse(BaseModel):
     total_params: Optional[int] = Field(default=None, description="Total model parameter count")
     trainable_percent: Optional[float] = Field(default=None, description="Percentage of parameters that are trainable")
     cancellable: bool = Field(default=False, description="Whether the run can be cancelled in its current state")
+    quantization_info: Optional[Dict[str, Any]] = Field(default=None, description="Quantization metadata if QLoRA is used")
 
 
 class TrainingArtifactMetadata(BaseModel):
@@ -590,6 +627,7 @@ class TrainingArtifactMetadata(BaseModel):
     artifact_directory: str = Field(description="Safe relative path to artifact storage")
     files: List[str] = Field(default_factory=list, description="List of generated artifact filenames")
     adapter_config: Dict[str, Any] = Field(default_factory=dict, description="LoRA adapter configuration dictionary")
+    quantization_config: Optional[Dict[str, Any]] = Field(default=None, description="Quantization metadata if QLoRA was used")
     trainable_params: int = Field(description="Trainable parameter count")
     total_params: int = Field(description="Total parameter count")
     trainable_percent: float = Field(description="Trainable percentage")

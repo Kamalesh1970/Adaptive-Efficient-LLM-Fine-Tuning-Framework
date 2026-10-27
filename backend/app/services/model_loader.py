@@ -9,10 +9,14 @@ import os
 from typing import Tuple, Any, Optional, Dict, Callable
 from backend.app.core.config import settings
 from backend.app.core.system import get_system_hardware_info
+from backend.app.schemas.quantization import QuantizationConfigSchema
 from backend.app.services.ml_dependencies import (
     is_full_ml_stack_available,
     verify_ml_dependencies_or_raise,
+    verify_qlora_dependencies_or_raise,
     MLDependencyMissingError,
+    BitsAndBytesMissingError,
+    CudaUnavailableForQuantizationError,
 )
 from backend.app.services.model_catalog import get_model_catalog_service
 
@@ -39,6 +43,11 @@ class ModelArchitectureUnsupportedError(ModelLoadError):
 
 class UntrustedModelCodeError(ModelLoadError):
     """Raised when model requires executing custom remote Python code but trust_remote_code is disabled."""
+    pass
+
+
+class QuantizationDeviceError(ModelLoadError):
+    """Raised when quantization is attempted on an incompatible or CPU device."""
     pass
 
 
@@ -105,15 +114,19 @@ class ModelLoaderService:
         device: Optional[str] = None,
         trust_remote_code: Optional[bool] = None,
         local_files_only: bool = False,
+        quantization_config: Optional[QuantizationConfigSchema] = None,
+        is_qlora: bool = False,
     ) -> Tuple[Any, Any, str]:
         """
         Loads a causal language model and tokenizer.
+        Supports standard floating-point precision and 4-bit/8-bit bitsandbytes quantization (QLoRA).
         Returns (model, tokenizer, device_used).
         Raises ModelLoadError subclasses on failure.
         """
         cleaned_id = validate_model_identifier(model_identifier)
         effective_trust = trust_remote_code if trust_remote_code is not None else self.allow_remote_code
         target_device = resolve_execution_device(device)
+        requires_quantization = is_qlora or (quantization_config is not None)
 
         # 1. Check synthetic test registry first (enables fast, offline unit testing)
         if cleaned_id in _test_model_registry:
@@ -121,6 +134,11 @@ class ModelLoaderService:
             try:
                 model = model_fac()
                 tok = tok_fac()
+                if requires_quantization:
+                    model.is_quantized_4bit = True
+                    model.quantization_config = (
+                        quantization_config.to_dict() if quantization_config else {"load_in_4bit": True}
+                    )
                 return model, tok, "cpu"
             except Exception as e:
                 raise ModelLoadError(f"Failed to instantiate test model '{cleaned_id}': {str(e)}") from e
@@ -136,14 +154,22 @@ class ModelLoaderService:
             )
 
         # 3. Ensure ML dependencies are installed
-        verify_ml_dependencies_or_raise()
+        if requires_quantization:
+            try:
+                verify_qlora_dependencies_or_raise(is_synthetic_model=False, device=target_device)
+            except CudaUnavailableForQuantizationError as e:
+                raise QuantizationDeviceError(str(e)) from e
+        else:
+            verify_ml_dependencies_or_raise()
 
         # 4. Import established ML libraries safely
         try:
             import torch
             from transformers import AutoTokenizer, AutoModelForCausalLM
+            if requires_quantization:
+                from transformers import BitsAndBytesConfig
         except ImportError as e:
-            raise MLDependencyMissingError(f"Failed to import PyTorch or Transformers: {str(e)}") from e
+            raise MLDependencyMissingError(f"Failed to import PyTorch, Transformers, or bitsandbytes: {str(e)}") from e
 
         # 5. Load Tokenizer
         tokenizer_kwargs: Dict[str, Any] = {
@@ -175,7 +201,7 @@ class ModelLoaderService:
                 raise ModelNotFoundError(f"Model or tokenizer '{cleaned_id}' was not found.") from e
             raise ModelLoadError(f"Failed to load tokenizer for '{cleaned_id}': {err_msg}") from e
 
-        # 6. Load Causal Language Model
+        # 6. Configure Causal Language Model
         model_kwargs: Dict[str, Any] = {
             "trust_remote_code": effective_trust,
             "local_files_only": local_files_only,
@@ -183,16 +209,36 @@ class ModelLoaderService:
         if token_to_use:
             model_kwargs["token"] = token_to_use
 
-        # Determine precision & device placement
-        if target_device.startswith("cuda"):
-            model_kwargs["torch_dtype"] = torch.float16
+        if requires_quantization:
+            # Construct BitsAndBytesConfig for 4-bit / 8-bit QLoRA loading
+            compute_dtype = torch.float16
+            if quantization_config:
+                cdtype = quantization_config.bnb_4bit_compute_dtype.lower()
+                if cdtype in ("bf16", "bfloat16"):
+                    compute_dtype = torch.bfloat16
+                elif cdtype in ("float32", "fp32"):
+                    compute_dtype = torch.float32
+
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=quantization_config.load_in_4bit if quantization_config else True,
+                load_in_8bit=quantization_config.load_in_8bit if quantization_config else False,
+                bnb_4bit_quant_type=quantization_config.bnb_4bit_quant_type if quantization_config else "nf4",
+                bnb_4bit_use_double_quant=quantization_config.bnb_4bit_use_double_quant if quantization_config else True,
+                bnb_4bit_compute_dtype=compute_dtype,
+            )
+            model_kwargs["quantization_config"] = bnb_config
             model_kwargs["device_map"] = target_device
         else:
-            model_kwargs["torch_dtype"] = torch.float32
+            # Standard precision & device placement for ordinary LoRA
+            if target_device.startswith("cuda"):
+                model_kwargs["torch_dtype"] = torch.float16
+                model_kwargs["device_map"] = target_device
+            else:
+                model_kwargs["torch_dtype"] = torch.float32
 
         try:
             model = AutoModelForCausalLM.from_pretrained(cleaned_id, **model_kwargs)
-            if not target_device.startswith("cuda"):
+            if not target_device.startswith("cuda") and not requires_quantization:
                 model = model.to(target_device)
         except Exception as e:
             err_msg = str(e)
