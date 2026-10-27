@@ -14,7 +14,13 @@ from backend.app.schemas.system import HealthResponse, SystemStatusResponse
 from backend.app.schemas.training import (
     TrainingConfigSchema,
     TrainingConfigValidationResult,
+    TrainingRunStatus,
+    TrainingRunCreateRequest,
+    TrainingRunResponse,
+    TrainingArtifactMetadata,
+    TrainingMethod,
 )
+from backend.app.services.job_manager import get_job_manager
 from backend.app.schemas.models import (
     ModelMetadata,
     ModelCatalogResponse,
@@ -32,6 +38,9 @@ from backend.app.services.dataset_service import get_dataset_service
 from backend.app.services.config_service import (
     get_default_training_config,
     validate_training_config,
+    export_training_config_yaml,
+    parse_training_config_yaml,
+    reset_training_config,
 )
 
 router = APIRouter(prefix="/api", tags=["Studio API"])
@@ -81,6 +90,56 @@ def get_training_config_defaults() -> TrainingConfigSchema:
 def post_validate_training_config(config_data: Dict[str, Any]) -> TrainingConfigValidationResult:
     """Validates provided training configuration against parameters and readiness criteria."""
     return validate_training_config(config_data)
+
+
+@router.post(
+    "/training/config/reset",
+    response_model=TrainingConfigSchema,
+    summary="Reset Training Configuration to Baseline Defaults",
+)
+def post_reset_training_config() -> TrainingConfigSchema:
+    """Resets training configuration to defaults without touching models or datasets."""
+    return reset_training_config()
+
+
+
+@router.post(
+    "/training/config/yaml/export",
+    summary="Export Configuration to YAML",
+)
+def post_export_training_config_yaml(config_data: Dict[str, Any]) -> Dict[str, str]:
+    """Serializes training configuration to sanitized YAML string."""
+    try:
+        config = TrainingConfigSchema(**config_data)
+        yaml_content = export_training_config_yaml(config)
+        return {"yaml_content": yaml_content}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to export configuration to YAML: {str(e)}",
+        )
+
+
+@router.post(
+    "/training/config/yaml/parse",
+    response_model=TrainingConfigValidationResult,
+    summary="Parse and Validate Uploaded YAML Configuration",
+)
+def post_parse_training_config_yaml(payload: Dict[str, str]) -> TrainingConfigValidationResult:
+    """Safely parses YAML configuration, rejecting malformed content and validating schema."""
+    yaml_content = payload.get("yaml_content", "")
+    try:
+        parsed_data = parse_training_config_yaml(yaml_content)
+        return validate_training_config(parsed_data)
+    except ValueError as e:
+        return TrainingConfigValidationResult(
+            is_valid=False,
+            errors=[str(e)],
+            field_errors={"yaml": [str(e)]},
+            warnings=[],
+            is_ready_for_training=False,
+            config=None,
+        )
 
 
 # ---------------------------------------------------------
@@ -371,4 +430,115 @@ def get_dataset_splits(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+# ============================================================================
+# Phase 4: Training Run Execution Endpoints
+# ============================================================================
+
+@router.post(
+    "/training/runs",
+    response_model=TrainingRunResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Validate and Launch Training Run",
+)
+def launch_training_run(payload: TrainingRunCreateRequest) -> TrainingRunResponse:
+    """
+    Validates configuration and launches a genuine LoRA fine-tuning run.
+    Execution proceeds asynchronously through explicit lifecycle states.
+    """
+    # 1. Validate configuration schema and constraints
+    validation_res = validate_training_config(payload.config)
+    if not validation_res.is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Configuration validation failed", "errors": validation_res.errors},
+        )
+
+    # 2. Strict Phase 4 boundary check: Only LoRA is supported
+    if payload.config.training_method != TrainingMethod.LORA:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Only LoRA fine-tuning is supported in Phase 4. Requested: {payload.config.training_method.value}",
+        )
+
+    # 3. Create and dispatch job
+    job_mgr = get_job_manager()
+    try:
+        job = job_mgr.create_job(config=payload.config, hf_token=payload.hf_token)
+        job_mgr.start_job(run_id=job.run_id, background=True)
+        return job.to_response()
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.get(
+    "/training/runs/{run_id}",
+    response_model=TrainingRunResponse,
+    summary="Get Training Run Status and Telemetry",
+)
+def get_training_run(run_id: str) -> TrainingRunResponse:
+    """Retrieves actual status, step progress, loss history, and telemetry for a training run."""
+    job_mgr = get_job_manager()
+    job = job_mgr.get_job(run_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training run '{run_id}' not found.",
+        )
+    return job.to_response()
+
+
+@router.post(
+    "/training/runs/{run_id}/cancel",
+    response_model=TrainingRunResponse,
+    summary="Request Training Run Cancellation",
+)
+def cancel_training_run(run_id: str) -> TrainingRunResponse:
+    """Requests safe cancellation of an active training run without artifact corruption."""
+    job_mgr = get_job_manager()
+    job = job_mgr.get_job(run_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training run '{run_id}' not found.",
+        )
+
+    job_mgr.cancel_job(run_id)
+    return job.to_response()
+
+
+@router.get(
+    "/training/runs/{run_id}/artifacts",
+    response_model=TrainingArtifactMetadata,
+    summary="Get Validated Training Artifact Metadata",
+)
+def get_run_artifacts(run_id: str) -> TrainingArtifactMetadata:
+    """Retrieves validated metadata for saved LoRA adapters and run artifacts."""
+    job_mgr = get_job_manager()
+    job = job_mgr.get_job(run_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training run '{run_id}' not found.",
+        )
+
+    if job.status != TrainingRunStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Artifacts are not available. Current run status is '{job.status.value}'.",
+        )
+
+    meta = job_mgr.get_artifacts_metadata(run_id)
+    if not meta:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artifact metadata could not be verified on disk for run '{run_id}'.",
+        )
+
+    return meta
+
 

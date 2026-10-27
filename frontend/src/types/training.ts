@@ -2,6 +2,19 @@ export type TrainingMethod = 'lora' | 'qlora' | 'full_finetuning';
 
 export type TrainingLengthType = 'steps' | 'epochs';
 
+export type OptimizerType =
+  | 'adamw_8bit'
+  | 'adamw_torch'
+  | 'paged_adamw_8bit'
+  | 'paged_adamw_32bit'
+  | 'adamw_hf'
+  | 'sgd'
+  | 'adafactor';
+
+export type MixedPrecision = 'fp16' | 'bf16' | 'none' | 'fp32';
+
+export type QuantizationPreference = 'nf4' | 'fp4' | 'int8' | 'none';
+
 export interface TrainingConfig {
   project_name: string;
   model_identifier: string | null;
@@ -11,10 +24,29 @@ export interface TrainingConfig {
   train_split: string;
   eval_split: string;
   training_length_type: TrainingLengthType;
+  training_duration_mode?: TrainingLengthType;
   training_length: number;
-  batch_size: number;
-  context_length: number;
+  max_steps?: number;
+  num_epochs?: number;
   learning_rate: number;
+  batch_size: number;
+  per_device_train_batch_size?: number;
+  gradient_accumulation_steps?: number;
+  weight_decay?: number;
+  warmup_ratio?: number;
+  optimizer?: string;
+  seed?: number;
+  context_length: number;
+  max_seq_length?: number;
+  truncation?: boolean;
+  packing?: boolean;
+  lora_rank?: number;
+  lora_alpha?: number;
+  lora_dropout?: number;
+  lora_target_modules?: string[];
+  gradient_checkpointing?: boolean;
+  mixed_precision?: string;
+  quantization_type?: string | null;
   advanced_enabled: boolean;
   hf_token_status: string;
 }
@@ -49,9 +81,13 @@ export interface HealthStatus {
 export interface ValidationResult {
   is_valid: boolean;
   errors: string[];
+  field_errors?: Record<string, string[]>;
   warnings: string[];
   is_ready_for_training: boolean;
   config: TrainingConfig | null;
+  effective_batch_size_per_device?: number | null;
+  total_effective_batch_size?: number | null;
+  detected_device_count?: number | null;
 }
 
 export type ModelVerificationStatus = 'catalog_registered' | 'verified' | 'unverified' | 'experimental';
@@ -151,5 +187,64 @@ export interface DatasetSplitResult {
   eval_indices: number[];
   has_overlap: boolean;
   warnings: string[];
+}
+
+export type TrainingRunStatus =
+  | 'queued'
+  | 'validating'
+  | 'loading_model'
+  | 'preparing_dataset'
+  | 'training'
+  | 'saving'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface TrainingMetricPoint {
+  step: number;
+  loss: number;
+  learning_rate?: number | null;
+  epoch?: number | null;
+  timestamp: string;
+}
+
+export interface TrainingRunCreateRequest {
+  config: TrainingConfig;
+  hf_token?: string | null;
+}
+
+export interface TrainingRunResponse {
+  run_id: string;
+  status: TrainingRunStatus;
+  config: TrainingConfig;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  current_step: number;
+  max_steps: number;
+  current_epoch?: number | null;
+  num_epochs?: number | null;
+  current_loss?: number | null;
+  loss_history: TrainingMetricPoint[];
+  elapsed_time_seconds: number;
+  error_message?: string | null;
+  device: string;
+  trainable_params?: number | null;
+  total_params?: number | null;
+  trainable_percent?: number | null;
+  cancellable: boolean;
+}
+
+export interface TrainingArtifactMetadata {
+  run_id: string;
+  artifact_directory: string;
+  files: string[];
+  adapter_config: Record<string, unknown>;
+  trainable_params: number;
+  total_params: number;
+  trainable_percent: number;
+  is_valid: boolean;
+  verification_status: string;
+  created_at: string;
 }
 

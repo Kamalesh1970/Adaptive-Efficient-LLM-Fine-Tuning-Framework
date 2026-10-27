@@ -46,6 +46,14 @@ class AppSettings(BaseModel):
         default=50 * 1024 * 1024,
         description="Maximum dataset upload size in bytes (50MB)"
     )
+    runs_output_dir: str = Field(
+        default="artifacts/runs",
+        description="Directory to store training run artifacts"
+    )
+    allow_remote_code: bool = Field(
+        default=False,
+        description="Whether to permit execution of remote custom model code (strictly False by default)"
+    )
 
 
 settings = AppSettings()

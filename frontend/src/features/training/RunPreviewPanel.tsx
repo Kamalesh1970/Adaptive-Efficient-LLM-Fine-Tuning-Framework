@@ -1,24 +1,27 @@
 import React from 'react';
-import { 
-  Cpu, 
-  HardDrive, 
-  Layers, 
-  Clock, 
-  Sparkles, 
+import {
+  Cpu,
+  HardDrive,
+  Layers,
+  Clock,
+  Sparkles,
   AlertTriangle,
   Lock,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Sliders,
+  Play,
+  Loader2,
 } from 'lucide-react';
 import { Badge } from '../../components/common/Badge';
-import { 
-  TrainingConfig, 
-  SystemStatus, 
+import {
+  TrainingConfig,
+  SystemStatus,
   ValidationResult,
   ModelMetadata,
   ModelValidationResponse,
   DatasetValidationReport,
-  DatasetSplitResult
+  DatasetSplitResult,
 } from '../../types/training';
 
 interface RunPreviewPanelProps {
@@ -31,9 +34,9 @@ interface RunPreviewPanelProps {
   selectedDatasetReport?: DatasetValidationReport | null;
   splitResult?: DatasetSplitResult | null;
   hfToken?: string;
+  isLaunching?: boolean;
   onStartTraining?: () => void;
 }
-
 
 export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
   config,
@@ -45,29 +48,41 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
   selectedDatasetReport,
   splitResult,
   hfToken = '',
+  isLaunching = false,
   onStartTraining,
 }) => {
   const hasModel = Boolean(config.model_identifier);
   const hasDataset = Boolean(config.dataset_reference);
-  const isReady = Boolean(validationResult?.is_ready_for_training); // Strictly false in Phase 0, 1 & 2
+  const isReady = Boolean(validationResult?.is_ready_for_training); // Always false in Phase 3
 
   const methodLabels: Record<string, string> = {
-    lora: 'LoRA (16-bit)',
-    qlora: 'QLoRA (4-bit NF4)',
-    full_finetuning: 'Full Weights',
+    lora: 'LoRA (Low-Rank Adaptation)',
+    qlora: 'QLoRA (Quantized LoRA)',
+    full_finetuning: 'Full Weights Fine-Tuning',
   };
 
-  const hardwareName = backendOnline && systemStatus
-    ? systemStatus.cuda_available
-      ? systemStatus.primary_gpu_name || 'CUDA GPU Detected'
-      : 'CPU Only (No GPU)'
-    : 'Unknown (Backend Offline)';
+  // Effective batch size calculation:
+  // per_device_train_batch_size × gradient_accumulation_steps × number_of_devices
+  const perDeviceBatchSize = config.per_device_train_batch_size ?? config.batch_size ?? 1;
+  const gradAccum = config.gradient_accumulation_steps ?? 1;
+  const effectivePerDevice = perDeviceBatchSize * gradAccum;
 
-  const vramDisplay = backendOnline && systemStatus
-    ? systemStatus.cuda_available && systemStatus.primary_gpu_vram_gb
-      ? `${systemStatus.primary_gpu_vram_gb.toFixed(1)} GB VRAM`
-      : 'N/A (CPU Mode)'
-    : 'Unavailable';
+  const detectedGpuCount =
+    backendOnline && systemStatus?.cuda_available && systemStatus.gpu_count > 0
+      ? systemStatus.gpu_count
+      : (validationResult?.detected_device_count ?? null);
+
+  const totalEffectiveBatch =
+    detectedGpuCount !== null && detectedGpuCount > 0
+      ? effectivePerDevice * detectedGpuCount
+      : null;
+
+  const hardwareName =
+    backendOnline && systemStatus
+      ? systemStatus.cuda_available
+        ? systemStatus.primary_gpu_name || 'CUDA GPU Detected'
+        : 'CPU Only (No GPU Detected)'
+      : 'Unknown (Backend Offline)';
 
   const hasEnvToken = config.hf_token_status === 'present_in_env';
   const hasInMemoryToken = Boolean(hfToken && hfToken.trim());
@@ -87,16 +102,42 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               Run Summary Preview
             </h3>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-studio-input border border-studio-border text-studio-muted font-mono">
-              Draft
+              Phase 4
             </span>
           </div>
           <p className="text-[11px] text-studio-muted mt-1">
-            Real-time verification of training readiness
+            Real-time verification of training parameters
           </p>
         </div>
 
         {/* Configuration Parameters Checklist */}
         <div className="space-y-2.5 text-xs">
+          {/* Validation Status */}
+          <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
+            <span className="text-studio-muted text-[11px]">Validation:</span>
+            <div>
+              {validationResult ? (
+                validationResult.is_valid ? (
+                  <span
+                    className="text-emerald-400 font-mono text-[11px] inline-flex items-center gap-1 font-medium"
+                    data-testid="validation-status-valid"
+                  >
+                    <CheckCircle2 className="w-3 h-3" /> Valid Config
+                  </span>
+                ) : (
+                  <span
+                    className="text-rose-400 font-mono text-[11px] inline-flex items-center gap-1 font-medium"
+                    data-testid="validation-status-invalid"
+                  >
+                    <XCircle className="w-3 h-3" /> {validationResult.errors.length} Error(s)
+                  </span>
+                )
+              ) : (
+                <span className="text-studio-muted text-[11px] font-mono">Unchecked</span>
+              )}
+            </div>
+          </div>
+
           {/* Model Status */}
           <div className="flex items-start justify-between py-1 border-b border-studio-border/30">
             <span className="text-studio-muted text-[11px] flex items-center gap-1.5">
@@ -105,9 +146,10 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
             <div className="text-right">
               {hasModel ? (
                 <div>
-                  <span 
-                    className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block font-medium" 
+                  <span
+                    className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block font-medium"
                     title={config.model_identifier!}
+                    data-testid="preview-model-identifier"
                   >
                     {config.model_identifier}
                   </span>
@@ -150,7 +192,11 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
             <div className="text-right">
               {hasDataset ? (
                 <div>
-                  <span className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block font-medium" title={config.dataset_reference!}>
+                  <span
+                    className="font-mono text-studio-text text-[11px] max-w-[140px] truncate block font-medium"
+                    title={config.dataset_reference!}
+                    data-testid="preview-dataset-reference"
+                  >
                     {selectedDatasetReport ? selectedDatasetReport.original_filename : config.dataset_reference}
                   </span>
                   {selectedDatasetReport && (
@@ -163,19 +209,6 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
                       Splits: {splitResult.train_count} train / {splitResult.eval_count} eval
                     </span>
                   )}
-                  {selectedDatasetReport && (
-                    <div className="mt-0.5">
-                      {selectedDatasetReport.is_valid ? (
-                        <span className="text-[10px] text-emerald-400 font-mono inline-flex items-center gap-0.5">
-                          <CheckCircle2 className="w-2.5 h-2.5" /> Validated
-                        </span>
-                      ) : (
-                        <span className="text-[10px] text-rose-400 font-mono inline-flex items-center gap-0.5">
-                          <XCircle className="w-2.5 h-2.5" /> Invalid Dataset
-                        </span>
-                      )}
-                    </div>
-                  )}
                 </div>
               ) : (
                 <span className="text-amber-400 font-medium text-[11px]" data-testid="status-dataset-none">
@@ -185,37 +218,53 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
             </div>
           </div>
 
-
           {/* Fine-Tuning Method */}
           <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
             <span className="text-studio-muted text-[11px]">Method:</span>
-            <span className="font-mono text-studio-text text-[11px] font-medium text-studio-accent">
+            <span
+              className="font-mono text-studio-text text-[11px] font-medium text-studio-accent"
+              data-testid="preview-method"
+            >
               {methodLabels[config.training_method] || config.training_method}
             </span>
           </div>
 
-          {/* Training Length */}
+          {/* Training Duration */}
           <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
             <span className="text-studio-muted text-[11px] flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 text-studio-muted" /> Duration:
             </span>
-            <span className="font-mono text-studio-text text-[11px]">
-              {config.training_length} {config.training_length_type}
+            <span className="font-mono text-studio-text text-[11px]" data-testid="preview-duration">
+              {config.training_length_type === 'steps'
+                ? `${config.max_steps ?? config.training_length} steps`
+                : `${config.num_epochs ?? config.training_length} epochs`}
             </span>
           </div>
 
-          {/* Batch Size */}
-          <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
-            <span className="text-studio-muted text-[11px]">Batch Size:</span>
-            <span className="font-mono text-studio-text text-[11px]">
-              {config.batch_size} (per device)
-            </span>
+          {/* Effective Batch Size */}
+          <div className="py-1 border-b border-studio-border/30">
+            <div className="flex items-center justify-between">
+              <span className="text-studio-muted text-[11px]">Effective Batch:</span>
+              <span
+                className="font-mono text-studio-text text-[11px] font-semibold text-studio-accent"
+                data-testid="preview-effective-batch"
+              >
+                {totalEffectiveBatch !== null
+                  ? `${totalEffectiveBatch}`
+                  : `${effectivePerDevice} (per-device)`}
+              </span>
+            </div>
+            <p className="text-[10px] text-studio-muted font-mono text-right mt-0.5">
+              {detectedGpuCount !== null && detectedGpuCount > 0
+                ? `${perDeviceBatchSize} batch × ${gradAccum} accum × ${detectedGpuCount} GPU(s)`
+                : `${perDeviceBatchSize} batch × ${gradAccum} accum (total unknown — no GPU detected)`}
+            </p>
           </div>
 
           {/* Context Length */}
           <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
             <span className="text-studio-muted text-[11px]">Context Length:</span>
-            <span className="font-mono text-studio-text text-[11px]">
+            <span className="font-mono text-studio-text text-[11px]" data-testid="preview-context-length">
               {config.context_length} tokens
             </span>
           </div>
@@ -223,85 +272,125 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
           {/* Learning Rate */}
           <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
             <span className="text-studio-muted text-[11px]">Learning Rate:</span>
-            <span className="font-mono text-studio-text text-[11px]">
+            <span className="font-mono text-studio-text text-[11px]" data-testid="preview-learning-rate">
               {config.learning_rate}
             </span>
           </div>
 
-          {/* Advanced Settings */}
-          <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
-            <span className="text-studio-muted text-[11px]">Advanced Mode:</span>
-            <span className="text-studio-muted text-[11px]">
-              {config.advanced_enabled ? 'Active' : 'Default Preset'}
-            </span>
-          </div>
-        </div>
-
-        {/* Hardware Status Breakdown */}
-        <div className="p-3 rounded-lg bg-studio-input/80 border border-studio-border space-y-2 text-xs">
-          <div className="text-[10px] font-bold text-studio-muted uppercase tracking-wider font-mono flex items-center justify-between">
-            <span className="flex items-center gap-1">
-              <Cpu className="w-3 h-3 text-studio-teal" /> Hardware Target
-            </span>
-            <Badge variant={backendOnline && systemStatus?.cuda_available ? 'success' : 'default'}>
-              {backendOnline && systemStatus?.cuda_available ? 'GPU Accelerated' : 'CPU Mode'}
-            </Badge>
-          </div>
-
-          <div className="text-[11px] space-y-1 font-mono">
-            <div className="flex justify-between text-studio-text">
-              <span className="text-studio-muted">Device:</span>
-              <span className="truncate max-w-[150px]" title={hardwareName}>{hardwareName}</span>
-            </div>
-            <div className="flex justify-between text-studio-text">
-              <span className="text-studio-muted">VRAM:</span>
-              <span className={systemStatus?.cuda_available ? 'text-studio-accent font-semibold' : 'text-studio-muted'}>
-                {vramDisplay}
+          {/* Relevant Advanced Settings */}
+          <div className="py-1 border-b border-studio-border/30 space-y-1">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-studio-muted flex items-center gap-1">
+                <Sliders className="w-3 h-3 text-studio-muted" /> Advanced:
+              </span>
+              <span className="font-mono text-studio-text text-[10px]">
+                {config.training_method === 'full_finetuning'
+                  ? 'Full Weights'
+                  : `r=${config.lora_rank ?? 16}, α=${config.lora_alpha ?? 32}`}
               </span>
             </div>
-            <div className="flex justify-between text-studio-text">
-              <span className="text-studio-muted">HF Token:</span>
-              <span className={hasHfToken ? 'text-emerald-400' : 'text-zinc-500'}>
-                {hasHfToken ? 'Configured (Unverified)' : 'Not Set'}
+            {config.training_method === 'qlora' && (
+              <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
+                <span>Quantization:</span>
+                <span className="text-studio-teal">{config.quantization_type || 'nf4'}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
+              <span>Optimizer / Prec:</span>
+              <span className="text-studio-text">
+                {config.optimizer || 'adamw_8bit'} • {(config.mixed_precision || 'fp16').toUpperCase()}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
+              <span>Checkpointing:</span>
+              <span className={config.gradient_checkpointing !== false ? 'text-emerald-400' : 'text-zinc-500'}>
+                {config.gradient_checkpointing !== false ? 'Enabled' : 'Disabled'}
               </span>
             </div>
           </div>
         </div>
+
+        {/* Hardware Status Breakdown - only when detected by backend */}
+        {backendOnline && systemStatus && (
+          <div
+            className="p-3 rounded-lg bg-studio-input/80 border border-studio-border space-y-2 text-xs"
+            data-testid="hardware-status-box"
+          >
+            <div className="text-[10px] font-bold text-studio-muted uppercase tracking-wider font-mono flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Cpu className="w-3 h-3 text-studio-teal" /> Hardware Detected
+              </span>
+              <Badge variant={systemStatus.cuda_available ? 'success' : 'default'}>
+                {systemStatus.cuda_available ? 'GPU Accelerated' : 'CPU Mode'}
+              </Badge>
+            </div>
+
+            <div className="text-[11px] space-y-1 font-mono">
+              <div className="flex justify-between text-studio-text">
+                <span className="text-studio-muted">Device:</span>
+                <span className="truncate max-w-[150px]" title={hardwareName}>
+                  {hardwareName}
+                </span>
+              </div>
+              <div className="flex justify-between text-studio-text">
+                <span className="text-studio-muted">Detected GPUs:</span>
+                <span className="text-studio-text font-semibold">
+                  {systemStatus.gpu_count} device(s)
+                </span>
+              </div>
+              <div className="flex justify-between text-studio-text">
+                <span className="text-studio-muted">HF Token:</span>
+                <span className={hasHfToken ? 'text-emerald-400' : 'text-zinc-500'}>
+                  {hasHfToken ? 'Configured (Unverified)' : 'Not Set'}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Action Area & Disabled State Notice */}
       <div className="pt-4 border-t border-studio-border/60 mt-4 space-y-2.5">
         <button
           type="button"
-          disabled={!isReady}
+          disabled={!isReady || isLaunching}
           onClick={onStartTraining}
           className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all shadow-md ${
-            isReady
+            isReady && !isLaunching
               ? 'bg-studio-accent hover:bg-studio-accentHover text-studio-bg shadow-studio-accent/20 cursor-pointer'
               : 'bg-studio-cardBorder/60 text-studio-muted border border-studio-border/60 cursor-not-allowed opacity-75'
           }`}
           data-testid="btn-start-training"
-          title={
-            !hasModel
-              ? 'Select a model first'
-              : !hasDataset
-              ? 'Select a dataset first'
-              : modelValidation && !modelValidation.is_valid
-              ? 'Selected model/method configuration is incompatible or missing credentials'
-              : 'Phase 1 Model Compatibility: Execution engine scheduled for Phase 4'
-          }
+          title={isReady ? 'Launch real LoRA fine-tuning' : 'Configure model and dataset to enable fine-tuning'}
         >
-          <Lock className="w-3.5 h-3.5 mr-1" />
-          <span>Start Fine-Tuning</span>
+          {isLaunching ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              <span>Launching Fine-Tuning...</span>
+            </>
+          ) : isReady ? (
+            <>
+              <Play className="w-3.5 h-3.5 mr-1 fill-current" />
+              <span>Start Fine-Tuning</span>
+            </>
+          ) : (
+            <>
+              <Lock className="w-3.5 h-3.5 mr-1" />
+              <span>Start Fine-Tuning</span>
+            </>
+          )}
         </button>
 
-        <div className="p-2 rounded bg-studio-bg/60 border border-studio-border text-[10px] text-studio-muted leading-relaxed" data-testid="phase0-preview-notice">
+        <div
+          className="p-2 rounded bg-studio-bg/60 border border-studio-border text-[10px] text-studio-muted leading-relaxed"
+          data-testid="phase0-preview-notice"
+        >
           <p className="flex items-center gap-1 font-semibold text-studio-text">
             <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
-            Phase 1 Compatibility Verification
+            Phase 3 Configuration System Active / Phase 4 LoRA Engine
           </p>
           <p className="mt-0.5">
-            The start button is disabled until models and datasets are selected and validated. Actual ML execution loops will be enabled in Phase 4.
+            Validate your model, dataset, and parameters, then launch genuine PEFT LoRA training.
           </p>
         </div>
       </div>

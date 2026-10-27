@@ -23,18 +23,22 @@ import {
   fetchDatasets,
   uploadDatasetFile,
   fetchDatasetReport,
-  fetchDatasetSplits
+  fetchDatasetSplits,
+  resetConfig,
+  launchTrainingRun,
 } from '../../services/api';
 
 interface TrainingPageProps {
   systemStatus: SystemStatus | null;
   backendOnline: boolean;
   onRefreshSystemStatus: () => void;
+  onLaunchRun?: (runId: string) => void;
 }
 
 export const TrainingPage: React.FC<TrainingPageProps> = ({
   systemStatus,
   backendOnline,
+  onLaunchRun,
 }) => {
   const [config, setConfig] = useState<TrainingConfig>({
     project_name: 'my-finetuned-model',
@@ -45,16 +49,44 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
     train_split: 'train',
     eval_split: 'none',
     training_length_type: 'steps',
+    training_duration_mode: 'steps',
     training_length: 100,
-    batch_size: 2,
-    context_length: 2048,
+    max_steps: 100,
+    num_epochs: 3.0,
     learning_rate: 0.0002,
+    batch_size: 2,
+    per_device_train_batch_size: 2,
+    gradient_accumulation_steps: 1,
+    weight_decay: 0.01,
+    warmup_ratio: 0.03,
+    optimizer: 'adamw_8bit',
+    seed: 42,
+    context_length: 2048,
+    max_seq_length: 2048,
+    truncation: true,
+    packing: false,
+    lora_rank: 16,
+    lora_alpha: 32,
+    lora_dropout: 0.05,
+    lora_target_modules: [
+      'q_proj',
+      'k_proj',
+      'v_proj',
+      'o_proj',
+      'gate_proj',
+      'up_proj',
+      'down_proj',
+    ],
+    gradient_checkpointing: true,
+    mixed_precision: 'fp16',
+    quantization_type: 'nf4',
     advanced_enabled: false,
     hf_token_status: 'not_detected',
   });
 
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [isResetting, setIsResetting] = useState(false);
+  const [isLaunching, setIsLaunching] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Phase 1 Model Catalog & Validation state
@@ -143,13 +175,28 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
         // Offline validation fallback
         if (isMounted) {
           const errors: string[] = [];
-          if (!config.project_name.trim()) errors.push('project_name: Project name cannot be blank');
-          if (config.context_length < 128) errors.push('context_length: Must be at least 128 tokens');
-          if (config.learning_rate <= 0) errors.push('learning_rate: Must be > 0.0');
+          const field_errors: Record<string, string[]> = {};
+          if (!config.project_name.trim()) {
+            errors.push('project_name: Project name cannot be blank');
+            field_errors['project_name'] = ['Project name cannot be blank'];
+          }
+          if (config.context_length < 128) {
+            errors.push('context_length: Must be at least 128 tokens');
+            field_errors['context_length'] = ['Must be at least 128 tokens'];
+          }
+          if (config.learning_rate <= 0) {
+            errors.push('learning_rate: Must be > 0.0');
+            field_errors['learning_rate'] = ['Must be > 0.0'];
+          }
+          if (config.batch_size <= 0) {
+            errors.push('batch_size: Must be > 0');
+            field_errors['batch_size'] = ['Must be > 0'];
+          }
 
           setValidationResult({
             is_valid: errors.length === 0,
             errors,
+            field_errors,
             warnings: ['Backend offline: local verification only'],
             is_ready_for_training: false,
             config,
@@ -300,7 +347,12 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
   const handleResetDefaults = async () => {
     setIsResetting(true);
     try {
-      const defaults = await fetchDefaultConfig();
+      let defaults: TrainingConfig;
+      try {
+        defaults = await resetConfig();
+      } catch {
+        defaults = await fetchDefaultConfig();
+      }
       setConfig(defaults);
       setHfToken('');
       setSelectedDatasetReport(null);
@@ -318,10 +370,37 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
         train_split: 'train',
         eval_split: 'none',
         training_length_type: 'steps',
+        training_duration_mode: 'steps',
         training_length: 100,
-        batch_size: 2,
-        context_length: 2048,
+        max_steps: 100,
+        num_epochs: 3.0,
         learning_rate: 0.0002,
+        batch_size: 2,
+        per_device_train_batch_size: 2,
+        gradient_accumulation_steps: 1,
+        weight_decay: 0.01,
+        warmup_ratio: 0.03,
+        optimizer: 'adamw_8bit',
+        seed: 42,
+        context_length: 2048,
+        max_seq_length: 2048,
+        truncation: true,
+        packing: false,
+        lora_rank: 16,
+        lora_alpha: 32,
+        lora_dropout: 0.05,
+        lora_target_modules: [
+          'q_proj',
+          'k_proj',
+          'v_proj',
+          'o_proj',
+          'gate_proj',
+          'up_proj',
+          'down_proj',
+        ],
+        gradient_checkpointing: true,
+        mixed_precision: 'fp16',
+        quantization_type: 'nf4',
         advanced_enabled: false,
         hf_token_status: 'not_detected',
       });
@@ -330,6 +409,26 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
       setSplitResult(null);
     } finally {
       setIsResetting(false);
+    }
+  };
+
+  const handleStartTraining = async () => {
+    if (isLaunching) return;
+    setIsLaunching(true);
+    setErrorMessage(null);
+    try {
+      const run = await launchTrainingRun({
+        config,
+        hf_token: hfToken.trim() || undefined,
+      });
+      if (onLaunchRun) {
+        onLaunchRun(run.run_id);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to launch training run';
+      setErrorMessage(msg);
+    } finally {
+      setIsLaunching(false);
     }
   };
 
@@ -402,7 +501,12 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
           />
 
           {/* 3. Parameters Card */}
-          <ParametersCard config={config} onChange={handleUpdateConfig} />
+          <ParametersCard
+            config={config}
+            onChange={handleUpdateConfig}
+            fieldErrors={validationResult?.field_errors}
+            selectedModel={selectedModel}
+          />
         </div>
 
         {/* Right-Side Persistent Preview Panel */}
@@ -416,9 +520,8 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
           selectedDatasetReport={selectedDatasetReport}
           splitResult={splitResult}
           hfToken={hfToken}
-          onStartTraining={() => {
-            alert('Phase 2 Notice: Dataset validated and splits configured. Execution engine scheduled for Phase 4.');
-          }}
+          isLaunching={isLaunching}
+          onStartTraining={handleStartTraining}
         />
       </div>
     </div>

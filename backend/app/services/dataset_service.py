@@ -573,6 +573,14 @@ class DatasetService:
         """Retrieves validation report by dataset ID."""
         return self._reports.get(dataset_id)
 
+    def get_dataset(self, dataset_id: str) -> Optional[DatasetValidationReport]:
+        """Retrieves validation report by dataset ID (alias for get_report)."""
+        return self.get_report(dataset_id)
+
+    def get_normalized_samples(self, dataset_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Retrieves cached normalized samples for a dataset ID."""
+        return self._normalized_cache.get(dataset_id)
+
     def list_datasets(self) -> List[DatasetSummary]:
         """Returns summaries of all processed datasets."""
         summaries = []

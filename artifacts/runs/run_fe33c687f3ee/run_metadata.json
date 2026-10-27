@@ -1,0 +1,12 @@
+{
+  "run_id": "run_fe33c687f3ee",
+  "created_at": "2026-10-27T17:25:46.977468+00:00",
+  "started_at": "2026-10-27T17:25:46.977592+00:00",
+  "completed_at": "2026-10-27T17:25:47.033121+00:00",
+  "device": "cpu",
+  "trainable_params": 2048,
+  "total_params": 6048,
+  "trainable_percent": 33.86243386243386,
+  "final_loss": 2.5285,
+  "total_steps": 5
+}

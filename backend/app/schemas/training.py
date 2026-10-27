@@ -5,7 +5,7 @@ Training Configuration and Validation Schemas for Adaptive LLM Fine-Tuning Studi
 import math
 from enum import Enum
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator, ValidationInfo
 
 
 class TrainingMethod(str, Enum):
@@ -65,6 +65,8 @@ DEFAULT_LORA_MODULES = [
 
 def _check_finite(val: Any, field_name: str) -> None:
     """Rejects NaN and infinite numeric values."""
+    if isinstance(val, bool):
+        return
     if isinstance(val, (int, float)):
         if math.isnan(val):
             raise ValueError(f"{field_name} cannot be NaN")
@@ -104,6 +106,18 @@ class TrainingConfigSchema(BaseModel):
     eval_split: str = Field(
         default="none",
         description="Dataset split used for evaluation ('none', 'test', 'validation')"
+    )
+    train_split_ratio: Optional[float] = Field(
+        default=0.9,
+        description="Proportion of dataset samples allocated to training"
+    )
+    eval_split_ratio: Optional[float] = Field(
+        default=0.1,
+        description="Proportion of dataset samples allocated to evaluation"
+    )
+    logging_steps: Optional[int] = Field(
+        default=10,
+        description="Interval of steps between recording metrics"
     )
 
     # Duration Settings
@@ -228,9 +242,11 @@ class TrainingConfigSchema(BaseModel):
         if not isinstance(data, dict):
             return data
 
-        # Check for NaN and Inf in raw numeric fields
+        # Check for NaN and Inf in raw numeric fields and string representations
         for key, val in data.items():
-            if isinstance(val, (float, int)):
+            if isinstance(val, str) and val.strip().lower() in ("nan", "inf", "-inf", "+inf", "infinity", "-infinity"):
+                raise ValueError(f"{key} cannot be NaN or infinite")
+            if not isinstance(val, bool) and isinstance(val, (float, int)):
                 _check_finite(val, key)
 
         # Sync batch size aliases
@@ -295,12 +311,15 @@ class TrainingConfigSchema(BaseModel):
 
     @field_validator("training_length", "max_steps")
     @classmethod
-    def validate_training_length(cls, v: int) -> int:
-        _check_finite(v, "training_length")
+    def validate_training_length(cls, v: Optional[int], info: ValidationInfo) -> Optional[int]:
+        if v is None:
+            return None
+        fname = info.field_name or "training_length"
+        _check_finite(v, fname)
         if v <= 0:
-            raise ValueError("Training length must be greater than 0")
+            raise ValueError(f"{fname} must be greater than 0")
         if v > 1000000:
-            raise ValueError("Training length exceeds maximum allowed value (1,000,000)")
+            raise ValueError(f"{fname} exceeds maximum allowed value (1,000,000)")
         return v
 
     @field_validator("num_epochs")
@@ -313,14 +332,17 @@ class TrainingConfigSchema(BaseModel):
             raise ValueError("Epoch count cannot exceed 1,000 epochs")
         return v
 
-    @field_validator("batch_size")
+    @field_validator("batch_size", "per_device_train_batch_size")
     @classmethod
-    def validate_batch_size(cls, v: int) -> int:
-        _check_finite(v, "batch_size")
+    def validate_batch_size(cls, v: Optional[int], info: ValidationInfo) -> Optional[int]:
+        if v is None:
+            return None
+        fname = info.field_name or "batch_size"
+        _check_finite(v, fname)
         if v <= 0:
-            raise ValueError("Batch size must be greater than 0")
+            raise ValueError(f"{fname} must be greater than 0")
         if v > 512:
-            raise ValueError("Batch size cannot exceed 512")
+            raise ValueError(f"{fname} cannot exceed 512")
         return v
 
     @field_validator("gradient_accumulation_steps")
@@ -333,14 +355,17 @@ class TrainingConfigSchema(BaseModel):
             raise ValueError("Gradient accumulation steps cannot exceed 512")
         return v
 
-    @field_validator("context_length")
+    @field_validator("context_length", "max_seq_length")
     @classmethod
-    def validate_context_length(cls, v: int) -> int:
-        _check_finite(v, "context_length")
+    def validate_context_length(cls, v: Optional[int], info: ValidationInfo) -> Optional[int]:
+        if v is None:
+            return None
+        fname = info.field_name or "context_length"
+        _check_finite(v, fname)
         if v < 128:
-            raise ValueError("Context length must be at least 128 tokens")
+            raise ValueError(f"{fname} must be at least 128 tokens")
         if v > 131072:
-            raise ValueError("Context length cannot exceed 131,072 tokens")
+            raise ValueError(f"{fname} cannot exceed 131,072 tokens")
         return v
 
     @field_validator("learning_rate")
@@ -466,8 +491,13 @@ class TrainingConfigSchema(BaseModel):
 
         # LoRA/QLoRA module check
         if self.training_method in (TrainingMethod.LORA, TrainingMethod.QLORA):
-            if not self.lora_target_modules:
+            if not self.lora_target_modules or len(self.lora_target_modules) == 0:
                 raise ValueError("At least one target module must be specified for LoRA or QLoRA fine-tuning")
+
+        # QLoRA quantization preference check
+        if self.training_method == TrainingMethod.QLORA:
+            if not self.quantization_type or self.quantization_type == "none":
+                raise ValueError("QLoRA requires an explicit quantization preference (e.g. 'nf4', 'fp4', or 'int8')")
 
         return self
 
@@ -501,3 +531,69 @@ class TrainingConfigValidationResult(BaseModel):
         default=None,
         description="Detected GPU device count, or None if unknown/CPU"
     )
+
+
+class TrainingRunStatus(str, Enum):
+    """Lifecycle statuses for a training run."""
+    QUEUED = "queued"
+    VALIDATING = "validating"
+    LOADING_MODEL = "loading_model"
+    PREPARING_DATASET = "preparing_dataset"
+    TRAINING = "training"
+    SAVING = "saving"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class TrainingMetricPoint(BaseModel):
+    """Telemetry data point recorded during training."""
+    step: int = Field(description="Training step number")
+    loss: float = Field(description="Calculated training loss")
+    learning_rate: Optional[float] = Field(default=None, description="Current learning rate")
+    epoch: Optional[float] = Field(default=None, description="Current epoch progress")
+    timestamp: str = Field(description="ISO timestamp of metric recording")
+
+
+class TrainingRunCreateRequest(BaseModel):
+    """Request payload to initiate a training run."""
+    config: TrainingConfigSchema = Field(description="Full training configuration")
+    hf_token: Optional[str] = Field(default=None, description="Optional Hugging Face access token")
+
+
+class TrainingRunResponse(BaseModel):
+    """Comprehensive training run status and telemetry response."""
+    run_id: str = Field(description="Unique training run identifier")
+    status: TrainingRunStatus = Field(description="Current lifecycle status")
+    config: TrainingConfigSchema = Field(description="Training configuration used for the run")
+    created_at: str = Field(description="ISO timestamp of run creation")
+    started_at: Optional[str] = Field(default=None, description="ISO timestamp of training start")
+    completed_at: Optional[str] = Field(default=None, description="ISO timestamp of completion or termination")
+    current_step: int = Field(default=0, description="Current step executed")
+    max_steps: int = Field(default=0, description="Target training steps")
+    current_epoch: Optional[float] = Field(default=0.0, description="Current epoch")
+    num_epochs: Optional[float] = Field(default=0.0, description="Target epochs")
+    current_loss: Optional[float] = Field(default=None, description="Latest recorded loss")
+    loss_history: List[TrainingMetricPoint] = Field(default_factory=list, description="Historical loss trajectory")
+    elapsed_time_seconds: float = Field(default=0.0, description="Elapsed runtime in seconds")
+    error_message: Optional[str] = Field(default=None, description="Failure details if status is failed")
+    device: str = Field(default="cpu", description="Execution device (e.g. cuda:0 or cpu)")
+    trainable_params: Optional[int] = Field(default=None, description="Number of trainable adapter parameters")
+    total_params: Optional[int] = Field(default=None, description="Total model parameter count")
+    trainable_percent: Optional[float] = Field(default=None, description="Percentage of parameters that are trainable")
+    cancellable: bool = Field(default=False, description="Whether the run can be cancelled in its current state")
+
+
+class TrainingArtifactMetadata(BaseModel):
+    """Validated artifact metadata after successful training."""
+    run_id: str = Field(description="Run identifier associated with artifacts")
+    artifact_directory: str = Field(description="Safe relative path to artifact storage")
+    files: List[str] = Field(default_factory=list, description="List of generated artifact filenames")
+    adapter_config: Dict[str, Any] = Field(default_factory=dict, description="LoRA adapter configuration dictionary")
+    trainable_params: int = Field(description="Trainable parameter count")
+    total_params: int = Field(description="Total parameter count")
+    trainable_percent: float = Field(description="Trainable percentage")
+    is_valid: bool = Field(default=True, description="Whether artifacts were successfully verified on disk")
+    verification_status: str = Field(default="verified", description="Artifact verification status")
+    created_at: str = Field(description="ISO creation timestamp")
+

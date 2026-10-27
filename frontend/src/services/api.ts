@@ -11,6 +11,9 @@ import {
   DatasetValidationReport,
   DatasetListResponse,
   DatasetSplitResult,
+  TrainingRunCreateRequest,
+  TrainingRunResponse,
+  TrainingArtifactMetadata,
 } from '../types/training';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -80,6 +83,26 @@ export async function validateConfig(config: TrainingConfig): Promise<Validation
   });
 }
 
+export async function exportConfigYaml(config: TrainingConfig): Promise<{ yaml_content: string }> {
+  return request<{ yaml_content: string }>('/training/config/yaml/export', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function parseConfigYaml(yamlContent: string): Promise<ValidationResult> {
+  return request<ValidationResult>('/training/config/yaml/parse', {
+    method: 'POST',
+    body: JSON.stringify({ yaml_content: yamlContent }),
+  });
+}
+
+export async function resetConfig(): Promise<TrainingConfig> {
+  return request<TrainingConfig>('/training/config/reset', {
+    method: 'POST',
+  });
+}
+
 // ---------------------------------------------------------
 // Phase 1: Model Selection & Compatibility Endpoints
 // ---------------------------------------------------------
@@ -135,3 +158,31 @@ export async function fetchDatasetSplits(
   });
   return request<DatasetSplitResult>(`/datasets/${encodeURIComponent(datasetId)}/splits?${query.toString()}`);
 }
+
+// ---------------------------------------------------------
+// Phase 4: Training Run Execution Endpoints
+// ---------------------------------------------------------
+
+export async function launchTrainingRun(
+  req: TrainingRunCreateRequest
+): Promise<TrainingRunResponse> {
+  return request<TrainingRunResponse>('/training/runs', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function fetchTrainingRun(runId: string): Promise<TrainingRunResponse> {
+  return request<TrainingRunResponse>(`/training/runs/${encodeURIComponent(runId)}`);
+}
+
+export async function cancelTrainingRun(runId: string): Promise<TrainingRunResponse> {
+  return request<TrainingRunResponse>(`/training/runs/${encodeURIComponent(runId)}/cancel`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchRunArtifacts(runId: string): Promise<TrainingArtifactMetadata> {
+  return request<TrainingArtifactMetadata>(`/training/runs/${encodeURIComponent(runId)}/artifacts`);
+}
+
