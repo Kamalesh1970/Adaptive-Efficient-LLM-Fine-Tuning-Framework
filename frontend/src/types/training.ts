@@ -47,6 +47,11 @@ export interface TrainingConfig {
   gradient_checkpointing?: boolean;
   mixed_precision?: string;
   quantization_type?: string | null;
+  load_in_4bit?: boolean;
+  load_in_8bit?: boolean;
+  bnb_4bit_quant_type?: string;
+  bnb_4bit_use_double_quant?: boolean;
+  bnb_4bit_compute_dtype?: string;
   advanced_enabled: boolean;
   hf_token_status: string;
 }
@@ -233,6 +238,7 @@ export interface TrainingRunResponse {
   total_params?: number | null;
   trainable_percent?: number | null;
   cancellable: boolean;
+  quantization_info?: Record<string, unknown> | null;
 }
 
 export interface TrainingArtifactMetadata {
@@ -240,6 +246,7 @@ export interface TrainingArtifactMetadata {
   artifact_directory: string;
   files: string[];
   adapter_config: Record<string, unknown>;
+  quantization_config?: Record<string, unknown> | null;
   trainable_params: number;
   total_params: number;
   trainable_percent: number;

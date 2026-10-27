@@ -455,11 +455,11 @@ def launch_training_run(payload: TrainingRunCreateRequest) -> TrainingRunRespons
             detail={"message": "Configuration validation failed", "errors": validation_res.errors},
         )
 
-    # 2. Strict Phase 4 boundary check: Only LoRA is supported
-    if payload.config.training_method != TrainingMethod.LORA:
+    # 2. Strict Phase 5 boundary check: LoRA and QLoRA are supported
+    if payload.config.training_method not in (TrainingMethod.LORA, TrainingMethod.QLORA):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Only LoRA fine-tuning is supported in Phase 4. Requested: {payload.config.training_method.value}",
+            detail=f"Supported methods are LoRA and QLoRA fine-tuning. Requested: {payload.config.training_method.value}",
         )
 
     # 3. Create and dispatch job

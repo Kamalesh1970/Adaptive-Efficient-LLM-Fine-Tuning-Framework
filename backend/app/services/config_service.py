@@ -181,7 +181,7 @@ def validate_training_config(raw_data: Dict[str, Any]) -> TrainingConfigValidati
         warnings.append("No dataset selected. Select or upload a dataset to proceed with fine-tuning.")
 
     # Phase notices
-    warnings.append("Phase 4: Real LoRA fine-tuning engine active.")
+    warnings.append("Phase 5: Real LoRA & QLoRA 4-bit fine-tuning engine active.")
     warnings.append("Phase 0 Notice: Training UI Skeleton active. Execution engine scheduled for Phase 4.")
 
     is_valid = len(errors) == 0
@@ -189,7 +189,7 @@ def validate_training_config(raw_data: Dict[str, Any]) -> TrainingConfigValidati
         is_valid
         and bool(parsed_config.model_identifier)
         and bool(parsed_config.dataset_reference)
-        and parsed_config.training_method == TrainingMethod.LORA
+        and parsed_config.training_method in (TrainingMethod.LORA, TrainingMethod.QLORA)
     )
 
     return TrainingConfigValidationResult(

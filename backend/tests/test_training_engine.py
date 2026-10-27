@@ -506,17 +506,17 @@ def test_job_manager_full_lifecycle(sample_dataset_service, tmp_path):
     clear_test_model_registry()
 
 
-def test_job_manager_rejection_of_non_lora():
-    """Job creation strictly rejects methods other than LoRA in Phase 4."""
+def test_job_manager_rejection_of_unsupported_method():
+    """Job creation strictly rejects unsupported methods like full_finetuning."""
     mgr = JobManager()
     config = TrainingConfigSchema(
         model_identifier="meta-llama/Meta-Llama-3-8B",
-        training_method=TrainingMethod.QLORA,
+        training_method=TrainingMethod.FULL_FINETUNING,
         dataset_reference="test-ds",
     )
     with pytest.raises(ValueError) as exc:
         mgr.create_job(config)
-    assert "Phase 4 only supports LoRA" in str(exc.value)
+    assert "Supported methods are LoRA and QLoRA fine-tuning" in str(exc.value)
 
 
 # ============================================================================
@@ -535,13 +535,13 @@ def test_api_launch_run_validation_failure(client: TestClient):
     assert res.status_code in (400, 422)
 
 
-def test_api_launch_run_rejects_qlora(client: TestClient):
-    """POST /api/training/runs rejects non-LoRA methods."""
+def test_api_launch_run_rejects_unsupported_method(client: TestClient):
+    """POST /api/training/runs rejects unsupported methods like full_finetuning."""
     payload = {
         "config": {
-            "project_name": "qlora-attempt",
+            "project_name": "full-ft-attempt",
             "model_identifier": "test/model",
-            "training_method": "qlora",
+            "training_method": "full_finetuning",
             "dataset_reference": "ds_123",
             "batch_size": 2,
             "context_length": 512,
@@ -550,7 +550,7 @@ def test_api_launch_run_rejects_qlora(client: TestClient):
     }
     res = client.post("/api/training/runs", json=payload)
     assert res.status_code == 400
-    assert "Only LoRA fine-tuning is supported in Phase 4" in res.json()["detail"]
+    assert "Supported methods are LoRA and QLoRA fine-tuning" in res.json()["detail"]
 
 
 def test_api_run_lifecycle_and_artifacts(client: TestClient, sample_dataset_service):

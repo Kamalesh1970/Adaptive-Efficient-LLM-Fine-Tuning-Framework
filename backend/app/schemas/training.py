@@ -527,6 +527,17 @@ class TrainingConfigSchema(BaseModel):
 
         return self
 
+    def get_quantization_config(self) -> Any:
+        """Returns typed QuantizationConfigSchema instance from configuration fields."""
+        from backend.app.schemas.quantization import QuantizationConfigSchema
+        return QuantizationConfigSchema(
+            load_in_4bit=self.load_in_4bit,
+            load_in_8bit=self.load_in_8bit,
+            bnb_4bit_quant_type=self.bnb_4bit_quant_type,
+            bnb_4bit_use_double_quant=self.bnb_4bit_use_double_quant,
+            bnb_4bit_compute_dtype=self.bnb_4bit_compute_dtype,
+        )
+
     def to_quantization_dict(self) -> Dict[str, Any]:
         """Serializes quantization configuration for artifacts and status reporting."""
         return {

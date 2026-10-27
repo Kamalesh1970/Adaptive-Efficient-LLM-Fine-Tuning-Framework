@@ -27,12 +27,19 @@ from backend.app.services.model_loader import (
     ModelLoaderService,
     get_model_loader_service,
     ModelLoadError,
+    QuantizationDeviceError,
 )
 from backend.app.services.lora_service import (
     inject_lora_adapters,
+    prepare_and_inject_qlora_adapters,
     save_and_verify_adapter,
     reload_lora_adapter,
     LoRAConfigurationError,
+)
+from backend.app.services.ml_dependencies import (
+    verify_qlora_dependencies_or_raise,
+    BitsAndBytesMissingError,
+    CudaUnavailableForQuantizationError,
 )
 from backend.app.services.training_dataset_service import (
     TrainingDatasetService,
@@ -89,6 +96,9 @@ class TrainingJob:
         self.trainable_params: Optional[int] = None
         self.total_params: Optional[int] = None
         self.trainable_percent: Optional[float] = None
+        self.quantization_info: Optional[Dict[str, Any]] = None
+        if config.training_method == TrainingMethod.QLORA:
+            self.quantization_info = config.to_quantization_dict()
 
         self._cancel_event = threading.Event()
         self._lock = threading.Lock()
@@ -144,6 +154,7 @@ class TrainingJob:
                 total_params=self.total_params,
                 trainable_percent=self.trainable_percent,
                 cancellable=cancellable,
+                quantization_info=self.quantization_info,
             )
 
 
@@ -175,9 +186,9 @@ class JobManager:
         Creates and registers a new training job.
         Validates configuration before registration.
         """
-        if config.training_method != TrainingMethod.LORA:
+        if config.training_method not in (TrainingMethod.LORA, TrainingMethod.QLORA):
             raise ValueError(
-                f"Phase 4 only supports LoRA fine-tuning. Requested: {config.training_method.value}"
+                f"Supported methods are LoRA and QLoRA fine-tuning. Requested: {config.training_method.value}"
             )
 
         if not config.model_identifier:
@@ -264,20 +275,31 @@ class JobManager:
             if job.is_cancelled:
                 raise TrainingCancelledException("Run cancelled before model loading.")
 
+            is_qlora = (job.config.training_method == TrainingMethod.QLORA)
+            quant_cfg = job.config.get_quantization_config() if is_qlora else None
+
             model, tokenizer, device_used = self.model_loader.load_model_and_tokenizer(
                 model_identifier=job.config.model_identifier,
                 hf_token=job._hf_token,
+                quantization_config=quant_cfg,
+                is_qlora=is_qlora,
             )
             job.device = device_used
 
             if job.is_cancelled:
                 raise TrainingCancelledException("Run cancelled after model loading.")
 
-            # Inject LoRA adapters
-            peft_model, param_summary = inject_lora_adapters(
-                base_model=model,
-                config=job.config,
-            )
+            # Inject LoRA or QLoRA adapters
+            if is_qlora:
+                peft_model, param_summary = prepare_and_inject_qlora_adapters(
+                    base_model=model,
+                    config=job.config,
+                )
+            else:
+                peft_model, param_summary = inject_lora_adapters(
+                    base_model=model,
+                    config=job.config,
+                )
             job.trainable_params = param_summary.trainable_params
             job.total_params = param_summary.total_params
             job.trainable_percent = param_summary.trainable_percent
@@ -325,6 +347,7 @@ class JobManager:
                 model=peft_model,
                 output_directory=job.output_dir,
                 sanitized_config=sanitized_cfg,
+                quantization_config=job.quantization_info,
             )
             job.artifact_files = saved_files
 
@@ -338,6 +361,8 @@ class JobManager:
             # Save run_metadata.json
             run_meta = {
                 "run_id": job.run_id,
+                "training_method": job.config.training_method.value,
+                "quantization": job.quantization_info,
                 "created_at": job.created_at,
                 "started_at": job.started_at,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
@@ -407,6 +432,7 @@ class JobManager:
             artifact_directory=safe_rel_dir,
             files=files,
             adapter_config=job.adapter_config,
+            quantization_config=job.quantization_info,
             trainable_params=job.trainable_params or 0,
             total_params=job.total_params or 0,
             trainable_percent=job.trainable_percent or 0.0,

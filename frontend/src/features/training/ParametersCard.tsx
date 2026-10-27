@@ -2,13 +2,15 @@ import React, { useState } from 'react';
 import { Sliders, Settings2, Info, ShieldCheck } from 'lucide-react';
 import { Card } from '../../components/common/Card';
 import { Badge } from '../../components/common/Badge';
-import { TrainingConfig, ModelMetadata } from '../../types/training';
+import { TrainingConfig, ModelMetadata, SystemStatus } from '../../types/training';
 
 interface ParametersCardProps {
   config: TrainingConfig;
   onChange: (updates: Partial<TrainingConfig>) => void;
   fieldErrors?: Record<string, string[]>;
   selectedModel?: ModelMetadata | null;
+  systemStatus?: SystemStatus | null;
+  backendOnline?: boolean;
 }
 
 const OPTIMIZER_OPTIONS = [
@@ -34,11 +36,19 @@ const QUANTIZATION_OPTIONS = [
   { value: 'int8', label: '8-bit Integer (Int8 Quantization)' },
 ];
 
+const COMPUTE_DTYPE_OPTIONS = [
+  { value: 'fp16', label: 'FP16 (Float16 - Standard GPU Acceleration)' },
+  { value: 'bf16', label: 'BF16 (BFloat16 - Ampere/Ada/Hopper Architecture)' },
+  { value: 'float32', label: 'Float32 (Full Precision Dequantized Forward)' },
+];
+
 export const ParametersCard: React.FC<ParametersCardProps> = ({
   config,
   onChange,
   fieldErrors,
   selectedModel,
+  systemStatus,
+  backendOnline = true,
 }) => {
   const [paramTab, setParamTab] = useState<'simple' | 'advanced'>(
     config.advanced_enabled ? 'advanced' : 'simple'
@@ -552,30 +562,137 @@ export const ParametersCard: React.FC<ParametersCardProps> = ({
                 {/* QLoRA Quantization Preferences */}
                 {isQlora && (
                   <div
-                    className="p-3 rounded bg-studio-input/40 border border-studio-border/60 space-y-1.5"
+                    className="p-3.5 rounded-lg bg-studio-input/50 border border-studio-border/70 space-y-3"
                     data-testid="qlora-quantization-section"
                   >
-                    <label className="block text-studio-text font-medium flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 text-studio-accent font-semibold">
+                    <div className="flex items-center justify-between border-b border-studio-border/40 pb-2">
+                      <span className="flex items-center gap-1.5 text-studio-accent font-semibold text-xs">
                         <ShieldCheck className="w-3.5 h-3.5" />
-                        QLoRA Quantization Preference
+                        QLoRA 4-Bit Quantization & Precision
                       </span>
-                      <span className="text-[10px] text-studio-muted font-mono">Explicit setting</span>
-                    </label>
-                    <select
-                      value={config.quantization_type || 'nf4'}
-                      onChange={(e) => onChange({ quantization_type: e.target.value })}
-                      className="w-full bg-studio-input border border-studio-cardBorder rounded-lg px-2.5 py-1.5 text-studio-text focus:outline-none focus:border-studio-accent font-mono text-xs"
-                      data-testid="select-quantization"
-                    >
-                      {QUANTIZATION_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[10px] text-studio-muted leading-relaxed font-mono">
-                      Quantization preference is configured here and verified against backend capabilities. Quantization is applied during training model loading, not executed now.
+                      {(() => {
+                        const compat = !backendOnline
+                          ? { status: 'Not verified', variant: 'default' as const }
+                          : !systemStatus
+                          ? { status: 'Not verified', variant: 'default' as const }
+                          : !systemStatus.cuda_available
+                          ? { status: 'Unsupported', variant: 'error' as const }
+                          : { status: 'Supported', variant: 'success' as const };
+                        return (
+                          <Badge variant={compat.variant} data-testid="qlora-compatibility-badge">
+                            {compat.status}
+                          </Badge>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Compatibility honesty notice */}
+                    {backendOnline && systemStatus && !systemStatus.cuda_available && (
+                      <div
+                        className="p-2.5 rounded bg-rose-950/30 border border-rose-500/30 text-[11px] text-rose-300 space-y-1"
+                        data-testid="qlora-hardware-warning"
+                      >
+                        <p className="font-semibold flex items-center gap-1 text-rose-400">
+                          Hardware Incompatible for Real Quantization
+                        </p>
+                        <p className="leading-relaxed">
+                          Bitsandbytes 4-bit quantization requires a CUDA GPU. No CUDA devices are detected on this host. QLoRA training runs cannot execute on real CPU hardware.
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Precision loading (4-bit vs 8-bit) */}
+                      <div>
+                        <label className="block text-studio-text font-medium mb-1 text-[11px]">
+                          Quantization Base Precision
+                        </label>
+                        <select
+                          value={config.load_in_8bit ? '8bit' : '4bit'}
+                          onChange={(e) => {
+                            const is8 = e.target.value === '8bit';
+                            onChange({
+                              load_in_4bit: !is8,
+                              load_in_8bit: is8,
+                              quantization_type: is8 ? 'int8' : (config.bnb_4bit_quant_type || 'nf4'),
+                            });
+                          }}
+                          className="w-full bg-studio-input border border-studio-cardBorder rounded-lg px-2.5 py-1.5 text-studio-text focus:outline-none focus:border-studio-accent font-mono text-xs"
+                          data-testid="select-qlora-precision"
+                        >
+                          <option value="4bit">4-bit Quantization (QLoRA Standard)</option>
+                          <option value="8bit">8-bit Quantization (BitsAndBytes Int8)</option>
+                        </select>
+                      </div>
+
+                      {/* 4-bit Quantization Type (NF4 vs FP4) */}
+                      <div>
+                        <label className="block text-studio-text font-medium mb-1 text-[11px]">
+                          Quantization Type (Format)
+                        </label>
+                        <select
+                          value={config.bnb_4bit_quant_type || config.quantization_type || 'nf4'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            onChange({
+                              bnb_4bit_quant_type: val,
+                              quantization_type: val,
+                            });
+                          }}
+                          className="w-full bg-studio-input border border-studio-cardBorder rounded-lg px-2.5 py-1.5 text-studio-text focus:outline-none focus:border-studio-accent font-mono text-xs"
+                          data-testid="select-quantization"
+                        >
+                          {QUANTIZATION_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      {/* Compute Dtype */}
+                      <div>
+                        <label className="block text-studio-text font-medium mb-1 text-[11px]">
+                          Compute Dtype (Forward Pass)
+                        </label>
+                        <select
+                          value={config.bnb_4bit_compute_dtype || 'fp16'}
+                          onChange={(e) => onChange({ bnb_4bit_compute_dtype: e.target.value })}
+                          className="w-full bg-studio-input border border-studio-cardBorder rounded-lg px-2.5 py-1.5 text-studio-text focus:outline-none focus:border-studio-accent font-mono text-xs"
+                          data-testid="select-compute-dtype"
+                        >
+                          {COMPUTE_DTYPE_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Double Quantization Toggle */}
+                      <div className="flex flex-col justify-end">
+                        <label className="flex items-center gap-2 p-2 rounded bg-studio-bg/60 border border-studio-border/50 cursor-pointer hover:border-studio-accent/40 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={config.bnb_4bit_use_double_quant !== false}
+                            onChange={(e) => onChange({ bnb_4bit_use_double_quant: e.target.checked })}
+                            className="rounded border-studio-cardBorder text-studio-accent focus:ring-0 cursor-pointer"
+                            data-testid="checkbox-double-quant"
+                          />
+                          <div className="text-[11px]">
+                            <span className="font-semibold text-studio-text block">Double Quantization</span>
+                            <span className="text-[10px] text-studio-muted font-mono block">
+                              Compresses 1st quant constants (~0.37 bits/param)
+                            </span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+
+                    <p className="text-[10px] text-studio-muted leading-relaxed font-mono pt-1">
+                      Base model weights are loaded and held in 4-bit precision via bitsandbytes. Adapters remain in trainable floating-point.
                     </p>
                   </div>
                 )}

@@ -290,9 +290,25 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               </span>
             </div>
             {config.training_method === 'qlora' && (
-              <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
-                <span>Quantization:</span>
-                <span className="text-studio-teal">{config.quantization_type || 'nf4'}</span>
+              <div className="space-y-1 pt-0.5 border-t border-studio-border/20" data-testid="preview-qlora-details">
+                <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
+                  <span>Quant Type:</span>
+                  <span className="text-studio-teal font-semibold">
+                    {config.load_in_8bit ? 'Int8' : `4-Bit ${(config.bnb_4bit_quant_type || config.quantization_type || 'nf4').toUpperCase()}`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
+                  <span>Double Quant:</span>
+                  <span className={config.bnb_4bit_use_double_quant !== false ? 'text-emerald-400' : 'text-zinc-500'}>
+                    {config.bnb_4bit_use_double_quant !== false ? 'Enabled (Nested)' : 'Disabled'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
+                  <span>Compute Dtype:</span>
+                  <span className="text-studio-text">
+                    {(config.bnb_4bit_compute_dtype || 'fp16').toUpperCase()}
+                  </span>
+                </div>
               </div>
             )}
             <div className="flex items-center justify-between text-[10px] text-studio-muted font-mono">
@@ -345,41 +361,72 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
                 </span>
               </div>
             </div>
+
+            {/* QLoRA Hardware Compatibility Status */}
+            {config.training_method === 'qlora' && (
+              <div className="pt-2 border-t border-studio-border/40 text-[10px] font-mono space-y-1" data-testid="preview-qlora-compat">
+                <div className="flex justify-between items-center">
+                  <span className="text-studio-muted">QLoRA Compatibility:</span>
+                  <Badge variant={systemStatus.cuda_available ? 'success' : 'error'}>
+                    {systemStatus.cuda_available ? 'Supported' : 'Unsupported'}
+                  </Badge>
+                </div>
+                {!systemStatus.cuda_available && (
+                  <p className="text-[10px] text-rose-400 leading-tight">
+                    QLoRA 4-bit fine-tuning requires CUDA GPU acceleration. Current hardware is CPU-only.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
 
       {/* Action Area & Disabled State Notice */}
       <div className="pt-4 border-t border-studio-border/60 mt-4 space-y-2.5">
-        <button
-          type="button"
-          disabled={!isReady || isLaunching}
-          onClick={onStartTraining}
-          className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all shadow-md ${
-            isReady && !isLaunching
-              ? 'bg-studio-accent hover:bg-studio-accentHover text-studio-bg shadow-studio-accent/20 cursor-pointer'
-              : 'bg-studio-cardBorder/60 text-studio-muted border border-studio-border/60 cursor-not-allowed opacity-75'
-          }`}
-          data-testid="btn-start-training"
-          title={isReady ? 'Launch real LoRA fine-tuning' : 'Configure model and dataset to enable fine-tuning'}
-        >
-          {isLaunching ? (
-            <>
-              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-              <span>Launching Fine-Tuning...</span>
-            </>
-          ) : isReady ? (
-            <>
-              <Play className="w-3.5 h-3.5 mr-1 fill-current" />
-              <span>Start Fine-Tuning</span>
-            </>
-          ) : (
-            <>
-              <Lock className="w-3.5 h-3.5 mr-1" />
-              <span>Start Fine-Tuning</span>
-            </>
-          )}
-        </button>
+        {(() => {
+          const isQloraBlocked = config.training_method === 'qlora' && Boolean(backendOnline && systemStatus && !systemStatus.cuda_available);
+          const isDisabled = !isReady || isLaunching || isQloraBlocked;
+
+          let btnTitle = 'Configure model and dataset to enable fine-tuning';
+          if (isQloraBlocked) {
+            btnTitle = 'QLoRA 4-bit fine-tuning requires CUDA GPU acceleration. Current hardware is CPU-only.';
+          } else if (isReady) {
+            btnTitle = config.training_method === 'qlora' ? 'Launch real QLoRA 4-bit fine-tuning' : 'Launch real LoRA fine-tuning';
+          }
+
+          return (
+            <button
+              type="button"
+              disabled={isDisabled}
+              onClick={onStartTraining}
+              className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center space-x-2 transition-all shadow-md ${
+                !isDisabled
+                  ? 'bg-studio-accent hover:bg-studio-accentHover text-studio-bg shadow-studio-accent/20 cursor-pointer'
+                  : 'bg-studio-cardBorder/60 text-studio-muted border border-studio-border/60 cursor-not-allowed opacity-75'
+              }`}
+              data-testid="btn-start-training"
+              title={btnTitle}
+            >
+              {isLaunching ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                  <span>Launching Fine-Tuning...</span>
+                </>
+              ) : !isDisabled ? (
+                <>
+                  <Play className="w-3.5 h-3.5 mr-1 fill-current" />
+                  <span>Start Fine-Tuning</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5 mr-1" />
+                  <span>Start Fine-Tuning</span>
+                </>
+              )}
+            </button>
+          );
+        })()}
 
         <div
           className="p-2 rounded bg-studio-bg/60 border border-studio-border text-[10px] text-studio-muted leading-relaxed"
@@ -387,10 +434,10 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
         >
           <p className="flex items-center gap-1 font-semibold text-studio-text">
             <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
-            Phase 3 Configuration System Active / Phase 4 LoRA Engine
+            Phase 3 Configuration System Active / Phase 5 QLoRA 4-Bit Quantization Engine
           </p>
           <p className="mt-0.5">
-            Validate your model, dataset, and parameters, then launch genuine PEFT LoRA training.
+            Train LoRA adapters on standard or 4-bit quantized base models with real-time metric tracking.
           </p>
         </div>
       </div>

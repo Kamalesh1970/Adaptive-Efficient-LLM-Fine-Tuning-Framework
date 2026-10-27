@@ -54,9 +54,23 @@ def test_validate_configured_model_and_dataset(client: TestClient):
     assert response.status_code == 200
     data = response.json()
     assert data["is_valid"] is True
-    # In Phase 0, is_ready_for_training remains False to prevent claiming execution is ready
-    assert data["is_ready_for_training"] is False
+    # In Phase 5, QLoRA is implemented so is_ready_for_training is True for QLoRA
+    assert data["is_ready_for_training"] is True
     assert any("phase 0" in w.lower() for w in data["warnings"])
+
+
+def test_validate_unsupported_method_not_ready_for_training(client: TestClient):
+    """Full fine-tuning is not yet supported in Phase 5, so is_ready_for_training is False."""
+    payload = {
+        "project_name": "custom-llama3-instruct",
+        "model_identifier": "meta-llama/Meta-Llama-3-8B",
+        "training_method": "full_finetuning",
+        "dataset_reference": "yahma/alpaca-cleaned",
+    }
+    response = client.post("/api/training/config/validate", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["is_ready_for_training"] is False
 
 
 def test_validate_invalid_empty_project_name(client: TestClient):

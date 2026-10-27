@@ -325,6 +325,26 @@ export const CurrentRunView: React.FC<CurrentRunViewProps> = ({
         </div>
       )}
 
+      {/* Quantization Configuration Telemetry */}
+      {run && run.quantization_info && (
+        <div className="p-3.5 rounded-xl bg-studio-input/60 border border-studio-border text-xs flex flex-wrap items-center justify-between gap-3 font-mono" data-testid="run-quantization-info">
+          <div className="flex items-center gap-2">
+            <Badge variant="info">QLoRA Quantized</Badge>
+            <span className="text-studio-muted">Quantization Format:</span>
+            <span className="text-studio-text font-semibold uppercase">
+              {String(run.quantization_info['bnb_4bit_quant_type'] || 'NF4').toUpperCase()} (4-Bit)
+            </span>
+            <span className="text-studio-muted">• Double Quant:</span>
+            <span className={run.quantization_info['bnb_4bit_use_double_quant'] ? 'text-emerald-400' : 'text-zinc-500'}>
+              {run.quantization_info['bnb_4bit_use_double_quant'] ? 'Active' : 'Off'}
+            </span>
+          </div>
+          <div className="text-studio-muted text-[11px]">
+            Compute Dtype: <span className="text-studio-text uppercase font-semibold">{String(run.quantization_info['bnb_4bit_compute_dtype'] || 'FP16').toUpperCase()}</span>
+          </div>
+        </div>
+      )}
+
       {/* Loss History Telemetry Stream */}
       <div className="p-4 rounded-xl bg-studio-card border border-studio-cardBorder shadow space-y-3">
         <div className="flex items-center justify-between pb-2 border-b border-studio-cardBorder">
@@ -381,7 +401,9 @@ export const CurrentRunView: React.FC<CurrentRunViewProps> = ({
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-5 h-5 text-emerald-400" />
               <h3 className="text-sm font-bold text-studio-text">
-                LoRA Adapters Saved and Verified Successfully
+                {run.config.training_method === 'qlora'
+                  ? 'QLoRA 4-Bit Adapters Saved and Verified Successfully'
+                  : 'LoRA Adapters Saved and Verified Successfully'}
               </h3>
             </div>
             <Badge variant="success">Verified On Disk</Badge>

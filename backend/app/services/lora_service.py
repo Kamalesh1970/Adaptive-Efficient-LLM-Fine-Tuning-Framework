@@ -167,10 +167,51 @@ def inject_lora_adapters(
     return peft_model, summary
 
 
+def prepare_model_for_kbit(base_model: Any, gradient_checkpointing: bool = True) -> Any:
+    """
+    Applies PEFT's prepare_model_for_kbit_training to prepare a 4-bit or 8-bit
+    quantized base model for LoRA adapter injection.
+    Freezes quantized base model parameters and enables input gradient calculation.
+    """
+    if hasattr(base_model, "is_synthetic_test_model") and base_model.is_synthetic_test_model:
+        if hasattr(base_model, "freeze_base_parameters"):
+            base_model.freeze_base_parameters()
+        base_model.is_prepared_for_kbit = True
+        return base_model
+
+    verify_ml_dependencies_or_raise()
+    try:
+        from peft import prepare_model_for_kbit_training
+        prepared = prepare_model_for_kbit_training(
+            base_model,
+            use_gradient_checkpointing=gradient_checkpointing,
+        )
+        return prepared
+    except Exception as e:
+        raise LoRAConfigurationError(f"Failed to prepare quantized model for k-bit training: {str(e)}") from e
+
+
+def prepare_and_inject_qlora_adapters(
+    base_model: Any,
+    config: TrainingConfigSchema,
+) -> Tuple[Any, ParameterCountSummary]:
+    """
+    Prepares a 4-bit quantized base model for k-bit training and attaches LoRA adapters.
+    Verifies base parameters remain frozen and adapter weights have gradients enabled.
+    Returns (peft_model, ParameterCountSummary).
+    """
+    prepared_model = prepare_model_for_kbit(
+        base_model,
+        gradient_checkpointing=config.gradient_checkpointing,
+    )
+    return inject_lora_adapters(prepared_model, config)
+
+
 def save_and_verify_adapter(
     model: Any,
     output_directory: str,
     sanitized_config: Dict[str, Any],
+    quantization_config: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
     """
     Saves LoRA adapter weights, adapter configuration, and sanitized training config to disk.
@@ -198,6 +239,12 @@ def save_and_verify_adapter(
     train_cfg_path = os.path.join(output_directory, "training_config.json")
     with open(train_cfg_path, "w", encoding="utf-8") as f:
         json.dump(sanitized_config, f, indent=2)
+
+    # Save quantization config if present (QLoRA)
+    if quantization_config:
+        q_cfg_path = os.path.join(output_directory, "quantization_config.json")
+        with open(q_cfg_path, "w", encoding="utf-8") as f:
+            json.dump(quantization_config, f, indent=2)
 
     # Verification: check files exist on disk
     for fname in os.listdir(output_directory):

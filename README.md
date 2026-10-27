@@ -489,9 +489,88 @@ Phase 4 implements a genuine, end-to-end LoRA fine-tuning engine for causal lang
 - **Optional ML Stack**: PyTorch, Transformers, and PEFT are probed safely. Unit tests run offline using synthetic models without GPU or internet.
 
 ### 7. Known Limitations (Phase 4 Boundaries)
-- **Only LoRA** is implemented in Phase 4.
-- **QLoRA and 4-bit NF4 Quantization** are planned for future phases.
-- Automatic hyperparameter tuning and deployment exporters are scheduled for subsequent roadmap milestones.
+- Full fine-tuning is deferred to future roadmap milestones.
+
+---
+
+## Phase 5: QLoRA and 4-Bit Quantization
+
+Phase 5 extends the LoRA training engine with genuine QLoRA 4-bit and 8-bit quantization capabilities powered by `bitsandbytes` and `peft`.
+
+### 1. LoRA versus QLoRA
+| Feature | LoRA | QLoRA |
+|---|---|---|
+| **Base Model Precision** | 16-bit float (FP16 / BF16) or 32-bit | 4-bit (NF4 / FP4) or 8-bit (Int8) |
+| **VRAM Footprint** | Full model weights (~16GB for 8B model) | Compressed weights (~4–5GB for 8B model) |
+| **Adapter Parameters** | Trainable FP16/BF16 low-rank matrices | Trainable FP16/BF16 low-rank matrices |
+| **Base Weight Freezing** | Base weights frozen (`requires_grad=False`) | Quantized weights frozen; gradients backprop through dequantization |
+| **Hardware Requirement** | CUDA GPU or CPU | **CUDA GPU Required** (bitsandbytes 4-bit requires CUDA) |
+
+### 2. Quantization Configuration
+Supported parameters in `QuantizationConfigSchema` and `TrainingConfigSchema`:
+- `load_in_4bit`: Enable 4-bit base model precision (default: `True`).
+- `load_in_8bit`: Enable 8-bit base model precision (`load_in_4bit` and `load_in_8bit` are mutually exclusive).
+- `bnb_4bit_quant_type`: Quantization format:
+  - `nf4`: NormalFloat4 (statistically optimal for zero-mean, normally distributed neural network weights).
+  - `fp4`: Float4 (standard 4-bit floating point).
+- `bnb_4bit_use_double_quant`: Double / nested quantization compresses the quantization constants themselves, saving ~0.37 bits per parameter with no loss in model quality (default: `True`).
+- `bnb_4bit_compute_dtype`: Computation precision for dequantized forward pass:
+  - `fp16`: Float16 (standard for Pascal, Turing, Ampere GPUs).
+  - `bf16`: BFloat16 (recommended for Ampere, Ada Lovelace, and Hopper architectures).
+  - `float32`: 32-bit single precision.
+
+### 3. Supported Hardware and Software Requirements
+- **Operating System**: Linux (x86_64).
+- **GPU Architecture**: NVIDIA CUDA-capable GPU with Compute Capability >= 7.0 (Turing or newer recommended).
+- **VRAM**: Minimum 6 GB VRAM recommended for 7B/8B models with 4-bit NF4, batch size 1, and gradient checkpointing.
+- **CPU Execution**: CPU execution is **not supported** for bitsandbytes 4-bit quantization. If CUDA hardware is absent, the backend rejects real QLoRA loading with an actionable `QuantizationDeviceError` / `CudaUnavailableForQuantizationError`, and the frontend UI disables the launch button with an honest explanation.
+
+### 4. Dependency Installation
+To install the optional GPU quantization dependencies:
+```bash
+pip install bitsandbytes accelerate
+```
+
+### 5. Running QLoRA Training
+1. In the Studio UI, select a base model (e.g. `meta-llama/Meta-Llama-3-8B`) and a validated dataset.
+2. Under **Fine-Tuning Method**, select `QLoRA`.
+3. In **Parameters & Hyperparameters**:
+   - Choose quantization format (`NF4` or `FP4`).
+   - Enable or disable **Double Quantization**.
+   - Select compute dtype (`FP16` or `BF16`).
+   - Configure LoRA Rank ($r$), Alpha ($\alpha$), and Target Modules.
+4. Verify the **Run Summary Preview** indicates `Supported` under QLoRA Compatibility.
+5. Click **Start Fine-Tuning** to launch the asynchronous training job.
+
+### 6. Artifact Format
+QLoRA runs save PEFT-compatible artifacts in `artifacts/runs/{run_id}`:
+- `adapter_config.json`: PEFT adapter hyperparameters ($r$, $\alpha$, target modules, task type).
+- `adapter_model.safetensors`: Trained adapter weights.
+- `training_config.json`: Sanitized training configuration (credentials excluded).
+- `quantization_config.json`: Quantization metadata (`load_in_4bit`, `bnb_4bit_quant_type`, `bnb_4bit_use_double_quant`, `bnb_4bit_compute_dtype`).
+- `metrics.json`: Step-by-step training loss and learning rate trajectory.
+- `run_metadata.json`: Run status, device, trainable parameters count, and final loss.
+
+### 7. Testing Commands
+Run all Phase 5 backend tests:
+```bash
+pytest backend/tests/test_qlora.py -v
+```
+
+Run full backend suite:
+```bash
+pytest -q
+```
+
+Run full frontend suite:
+```bash
+cd frontend && npm test -- --run
+```
+
+Run frontend production build:
+```bash
+cd frontend && npm run build
+```
 
 ---
 
@@ -502,7 +581,8 @@ Phase 4 implements a genuine, end-to-end LoRA fine-tuning engine for causal lang
 - [x] **Phase 2**: Dataset Upload (JSON, JSONL, CSV), Robust Validation, Multi-Schema Detection, Deterministic Normalization, Train/Eval Split Selection (0% Overlap Guarantee), and Training Studio UI Integration.
 - [x] **Phase 3**: Training Parameters & Configuration Management System (Simple/Advanced modes, LoRA adapter settings, YAML presets, effective batch size calculation, and full schema validation).
 - [x] **Phase 4**: Real LoRA Fine-Tuning Engine (Modular model loader, PEFT adapter injection, parameter freezing, dataset preparation, optimizer loop, streaming telemetry, cancellation, artifact validation, and Current Run view).
-- [ ] **Phase 5**: Evaluation Framework, Benchmark Suites, and Training History.
-- [ ] **Phase 6**: Model Exporter (LoRA merge, GGUF/vLLM export, and deployment).
+- [x] **Phase 5**: QLoRA and 4-Bit Quantization (Typed quantization schema, bitsandbytes 4-bit NF4/FP4 loading, k-bit model preparation via PEFT, double quantization, compute dtype selection, honest hardware verification, streaming telemetry, and verified adapter artifacts).
+- [ ] **Phase 6**: Model Evaluation, Benchmark Suites, and Training History.
+- [ ] **Phase 7**: Model Exporter (LoRA merge, GGUF/vLLM export, and deployment).
 
 

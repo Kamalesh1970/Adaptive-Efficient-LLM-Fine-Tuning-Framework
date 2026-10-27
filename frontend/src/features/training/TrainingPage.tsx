@@ -506,6 +506,8 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
             onChange={handleUpdateConfig}
             fieldErrors={validationResult?.field_errors}
             selectedModel={selectedModel}
+            systemStatus={systemStatus}
+            backendOnline={backendOnline}
           />
         </div>
 
