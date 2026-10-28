@@ -265,3 +265,23 @@ export interface TrainingArtifactMetadata {
   created_at: string;
 }
 
+// ─── Phase 6: Preflight Validation Types ─────────────────────────────────────
+
+export type PreflightStatus = 'pass' | 'fail' | 'warn' | 'skip';
+
+export interface PreflightCheckResult {
+  check_id: string;
+  label: string;
+  status: PreflightStatus;
+  message: string;
+  detail?: Record<string, unknown> | null;
+}
+
+export interface PreflightCheckResponse {
+  checks: PreflightCheckResult[];
+  can_launch: boolean;
+  blocking_count: number;
+  warning_count: number;
+  method: string | null;
+  estimated_vram_gb: number | null;
+}

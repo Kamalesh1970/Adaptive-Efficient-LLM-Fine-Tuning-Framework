@@ -606,6 +606,10 @@ class TrainingRunCreateRequest(BaseModel):
     """Request payload to initiate a training run."""
     config: TrainingConfigSchema = Field(description="Full training configuration")
     hf_token: Optional[str] = Field(default=None, description="Optional Hugging Face access token")
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        description="Optional client idempotency key to prevent accidental duplicate launches",
+    )
 
 
 class TrainingRunResponse(BaseModel):

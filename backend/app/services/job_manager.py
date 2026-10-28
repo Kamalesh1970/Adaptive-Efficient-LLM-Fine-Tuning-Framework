@@ -175,17 +175,28 @@ class JobManager:
 
         os.makedirs(self.runs_output_dir, exist_ok=True)
         self._jobs: Dict[str, TrainingJob] = {}
+        self._idempotency_map: Dict[str, str] = {}
         self._lock = threading.Lock()
 
     def create_job(
         self,
         config: TrainingConfigSchema,
         hf_token: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> TrainingJob:
         """
         Creates and registers a new training job.
         Validates configuration before registration.
+        Guarantees duplicate submission prevention: returns existing job if idempotency_key is repeated.
         """
+        if idempotency_key:
+            with self._lock:
+                if idempotency_key in self._idempotency_map:
+                    existing_run_id = self._idempotency_map[idempotency_key]
+                    existing_job = self._jobs.get(existing_run_id)
+                    if existing_job:
+                        return existing_job
+
         if config.training_method not in (TrainingMethod.LORA, TrainingMethod.QLORA):
             raise ValueError(
                 f"Supported methods are LoRA and QLoRA fine-tuning. Requested: {config.training_method.value}"
@@ -196,6 +207,26 @@ class JobManager:
 
         if not config.dataset_reference:
             raise ValueError("dataset_reference must be provided in configuration.")
+
+        # Check for duplicate submission with identical active job
+        with self._lock:
+            active_statuses = {
+                TrainingRunStatus.QUEUED,
+                TrainingRunStatus.VALIDATING,
+                TrainingRunStatus.LOADING_MODEL,
+                TrainingRunStatus.PREPARING_DATASET,
+                TrainingRunStatus.TRAINING,
+            }
+            for j in self._jobs.values():
+                if j.status in active_statuses and (
+                    j.config.project_name == config.project_name
+                    and j.config.model_identifier == config.model_identifier
+                    and j.config.dataset_reference == config.dataset_reference
+                    and j.config.training_method == config.training_method
+                ):
+                    if idempotency_key:
+                        self._idempotency_map[idempotency_key] = j.run_id
+                    return j
 
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         output_dir = os.path.join(self.runs_output_dir, run_id)
@@ -209,6 +240,8 @@ class JobManager:
 
         with self._lock:
             self._jobs[run_id] = job
+            if idempotency_key:
+                self._idempotency_map[idempotency_key] = run_id
 
         return job
 

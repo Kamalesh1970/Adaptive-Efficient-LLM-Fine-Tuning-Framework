@@ -14,6 +14,7 @@ import {
   TrainingRunCreateRequest,
   TrainingRunResponse,
   TrainingArtifactMetadata,
+  PreflightCheckResponse,
 } from '../types/training';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -186,3 +187,20 @@ export async function fetchRunArtifacts(runId: string): Promise<TrainingArtifact
   return request<TrainingArtifactMetadata>(`/training/runs/${encodeURIComponent(runId)}/artifacts`);
 }
 
+// ---------------------------------------------------------
+// Phase 6: Pre-Launch Preflight Validation
+// ---------------------------------------------------------
+
+export async function runPreflight(
+  config: TrainingConfig,
+  hfToken?: string | null,
+): Promise<PreflightCheckResponse> {
+  const payload: Record<string, unknown> = { ...config };
+  if (hfToken && hfToken.trim()) {
+    payload['hf_token'] = hfToken.trim();
+  }
+  return request<PreflightCheckResponse>('/training/preflight', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}

@@ -1,5 +1,5 @@
 """
-API Route Handlers for Adaptive LLM Fine-Tuning Studio (Phase 0).
+API Route Handlers for Adaptive LLM Fine-Tuning Studio (Phase 0–6).
 """
 
 from typing import Dict, Any, Optional
@@ -33,6 +33,13 @@ from backend.app.schemas.datasets import (
     DatasetSplitResult,
     DatasetValidationRequest,
 )
+from backend.app.schemas.preflight import (
+    PreflightCheckResponse,
+    PreflightCheckResult,
+    PreflightStatus,
+    RunPlan,
+    RunValidationResponse,
+)
 from backend.app.services.model_catalog import get_model_catalog_service
 from backend.app.services.dataset_service import get_dataset_service
 from backend.app.services.config_service import (
@@ -42,6 +49,7 @@ from backend.app.services.config_service import (
     parse_training_config_yaml,
     reset_training_config,
 )
+from backend.app.services.preflight_service import run_preflight, generate_run_plan
 
 router = APIRouter(prefix="/api", tags=["Studio API"])
 
@@ -433,6 +441,113 @@ def get_dataset_splits(
 
 
 # ============================================================================
+# Phase 6: Training Run Preflight Validation Endpoint
+# ============================================================================
+
+@router.post(
+    "/training/preflight",
+    response_model=PreflightCheckResponse,
+    summary="Run Pre-Launch Preflight Validation",
+)
+def post_training_preflight(payload: Dict[str, Any]) -> PreflightCheckResponse:
+    """
+    Executes an ordered sequence of pre-launch validation checks before starting training.
+    Validates model selection, dataset, device hardware, ML dependencies, VRAM capacity,
+    method–device compatibility, and HF token availability.
+
+    Returns a typed PreflightCheckResponse with per-check granularity and an overall
+    can_launch flag indicating whether training may proceed safely.
+    """
+    try:
+        hf_token: Optional[str] = payload.pop("hf_token", None)
+        config = TrainingConfigSchema(**payload)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid training configuration: {str(e)}",
+        )
+
+    try:
+        return run_preflight(config=config, hf_token=hf_token)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Preflight check failed unexpectedly: {str(e)}",
+        )
+
+
+@router.post(
+    "/training/preview",
+    response_model=RunPlan,
+    summary="Generate Structured Run Plan and Resource Compatibility",
+)
+def post_training_preview(payload: Dict[str, Any]) -> RunPlan:
+    """
+    Generates a structured, serializable RunPlan containing configuration,
+    model, dataset, device, validation results, resource compatibility, and output settings.
+    Guarantees secrets and access tokens are strictly excluded.
+    """
+    try:
+        raw_config = payload.get("config", payload)
+        hf_token: Optional[str] = payload.get("hf_token")
+        if isinstance(raw_config, dict):
+            raw_config = dict(raw_config)
+            hf_token = raw_config.pop("hf_token", hf_token)
+        config = TrainingConfigSchema(**raw_config) if isinstance(raw_config, dict) else raw_config
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid training configuration: {str(e)}",
+        )
+
+    try:
+        return generate_run_plan(config=config, hf_token=hf_token)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Run plan generation failed unexpectedly: {str(e)}",
+        )
+
+
+@router.post(
+    "/training/validate-run",
+    response_model=RunValidationResponse,
+    summary="Validate Training Run and Generate Plan",
+)
+def post_validate_run(payload: Dict[str, Any]) -> RunValidationResponse:
+    """
+    Validates a training run before launch and returns preflight checks along with the generated RunPlan.
+    """
+    try:
+        raw_config = payload.get("config", payload)
+        hf_token: Optional[str] = payload.get("hf_token")
+        if isinstance(raw_config, dict):
+            raw_config = dict(raw_config)
+            hf_token = raw_config.pop("hf_token", hf_token)
+        config = TrainingConfigSchema(**raw_config) if isinstance(raw_config, dict) else raw_config
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid training configuration: {str(e)}",
+        )
+
+    try:
+        plan = generate_run_plan(config=config, hf_token=hf_token)
+        return RunValidationResponse(
+            can_launch=plan.can_launch,
+            blocking_count=plan.blocking_count,
+            warning_count=plan.warning_count,
+            checks=plan.validation_results.checks,
+            plan=plan,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Run validation failed unexpectedly: {str(e)}",
+        )
+
+
+# ============================================================================
 # Phase 4: Training Run Execution Endpoints
 # ============================================================================
 
@@ -444,7 +559,8 @@ def get_dataset_splits(
 )
 def launch_training_run(payload: TrainingRunCreateRequest) -> TrainingRunResponse:
     """
-    Validates configuration and launches a genuine LoRA fine-tuning run.
+    Validates configuration and launches a genuine LoRA or QLoRA fine-tuning run.
+    Enforces server-side preflight verification and duplicate submission prevention.
     Execution proceeds asynchronously through explicit lifecycle states.
     """
     # 1. Validate configuration schema and constraints
@@ -462,11 +578,29 @@ def launch_training_run(payload: TrainingRunCreateRequest) -> TrainingRunRespons
             detail=f"Supported methods are LoRA and QLoRA fine-tuning. Requested: {payload.config.training_method.value}",
         )
 
-    # 3. Create and dispatch job
+    # 3. Server-side preflight check: all blocking checks must pass
+    preflight = run_preflight(config=payload.config, hf_token=payload.hf_token)
+    if not preflight.can_launch:
+        blocking_msgs = [c.message for c in preflight.checks if c.status == PreflightStatus.FAIL]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Training launch rejected by preflight validation checks",
+                "blocking_count": preflight.blocking_count,
+                "blocking_issues": blocking_msgs,
+            },
+        )
+
+    # 4. Create and dispatch job with duplicate launch prevention
     job_mgr = get_job_manager()
     try:
-        job = job_mgr.create_job(config=payload.config, hf_token=payload.hf_token)
-        job_mgr.start_job(run_id=job.run_id, background=True)
+        job = job_mgr.create_job(
+            config=payload.config,
+            hf_token=payload.hf_token,
+            idempotency_key=payload.idempotency_key,
+        )
+        if job.status == TrainingRunStatus.QUEUED:
+            job_mgr.start_job(run_id=job.run_id, background=True)
         return job.to_response()
     except ValueError as e:
         raise HTTPException(

@@ -102,7 +102,7 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               Run Summary Preview
             </h3>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-studio-input border border-studio-border text-studio-muted font-mono">
-              Phase 4
+              Phase 6
             </span>
           </div>
           <p className="text-[11px] text-studio-muted mt-1">
@@ -472,10 +472,10 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
         >
           <p className="flex items-center gap-1 font-semibold text-studio-text">
             <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0" />
-            Phase 3 Configuration System Active / Phase 5 QLoRA 4-Bit Quantization Engine
+            Phase 3 Configuration System Active / Phase 6 Pre-Launch Resource Validation Active
           </p>
           <p className="mt-0.5">
-            Train LoRA adapters on standard or 4-bit quantized base models with real-time metric tracking.
+            Clicking Start Fine-Tuning opens the preflight checklist to validate hardware, dependencies, and configuration before launching.
           </p>
         </div>
       </div>

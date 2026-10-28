@@ -4,6 +4,7 @@ import { DatasetCard } from './DatasetCard';
 import { ParametersCard } from './ParametersCard';
 import { ConfigToolbar } from './ConfigToolbar';
 import { RunPreviewPanel } from './RunPreviewPanel';
+import { PreflightModal } from './PreflightModal';
 import { AlertBanner } from '../../components/common/AlertBanner';
 import { 
   TrainingConfig, 
@@ -13,7 +14,8 @@ import {
   ModelValidationResponse,
   DatasetSummary,
   DatasetValidationReport,
-  DatasetSplitResult
+  DatasetSplitResult,
+  PreflightCheckResponse,
 } from '../../types/training';
 import { 
   fetchDefaultConfig, 
@@ -26,6 +28,7 @@ import {
   fetchDatasetSplits,
   resetConfig,
   launchTrainingRun,
+  runPreflight,
 } from '../../services/api';
 
 interface TrainingPageProps {
@@ -107,6 +110,12 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
   const [splitResult, setSplitResult] = useState<DatasetSplitResult | null>(null);
   const [trainRatio, setTrainRatio] = useState<number>(0.9);
   const [evalRatio, setEvalRatio] = useState<number>(0.1);
+
+  // Phase 6 Preflight state
+  const [isPreflightOpen, setIsPreflightOpen] = useState(false);
+  const [isPreflightLoading, setIsPreflightLoading] = useState(false);
+  const [preflightResult, setPreflightResult] = useState<PreflightCheckResponse | null>(null);
+  const [preflightError, setPreflightError] = useState<string | null>(null);
 
   // Load model catalog from backend
   const loadCatalog = useCallback(async () => {
@@ -412,8 +421,42 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
     }
   };
 
+  // Phase 6: Open preflight modal and run checks
+  const handleOpenPreflight = useCallback(async () => {
+    setIsPreflightOpen(true);
+    setPreflightError(null);
+    setPreflightResult(null);
+    setIsPreflightLoading(true);
+    try {
+      const result = await runPreflight(config, hfToken.trim() || null);
+      setPreflightResult(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Preflight check failed';
+      setPreflightError(msg);
+    } finally {
+      setIsPreflightLoading(false);
+    }
+  }, [config, hfToken]);
+
+  // Re-run preflight checks (user clicks Re-run inside modal)
+  const handleRerunPreflight = useCallback(async () => {
+    setPreflightError(null);
+    setPreflightResult(null);
+    setIsPreflightLoading(true);
+    try {
+      const result = await runPreflight(config, hfToken.trim() || null);
+      setPreflightResult(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Preflight check failed';
+      setPreflightError(msg);
+    } finally {
+      setIsPreflightLoading(false);
+    }
+  }, [config, hfToken]);
+
   const handleStartTraining = async () => {
     if (isLaunching) return;
+    setIsPreflightOpen(false);
     setIsLaunching(true);
     setErrorMessage(null);
     try {
@@ -523,9 +566,20 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
           splitResult={splitResult}
           hfToken={hfToken}
           isLaunching={isLaunching}
-          onStartTraining={handleStartTraining}
+          onStartTraining={handleOpenPreflight}
         />
       </div>
+
+      {/* Phase 6: Pre-Launch Preflight Modal */}
+      <PreflightModal
+        isOpen={isPreflightOpen}
+        isLoading={isPreflightLoading}
+        result={preflightResult}
+        error={preflightError}
+        onConfirmLaunch={handleStartTraining}
+        onClose={() => setIsPreflightOpen(false)}
+        onRerun={handleRerunPreflight}
+      />
     </div>
   );
 };
