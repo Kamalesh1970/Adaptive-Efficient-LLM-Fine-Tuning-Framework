@@ -192,8 +192,13 @@ export const TrainingHistoryView: React.FC<TrainingHistoryViewProps> = ({
                     className="hover:bg-studio-input/50 transition-colors"
                     data-testid={`history-row-${r.run_id}`}
                   >
-                    <td className="py-2.5 px-4 font-semibold text-studio-text">
-                      {r.run_id}
+                    <td className="py-2.5 px-4">
+                      <div className="font-semibold text-studio-text truncate max-w-[150px]" title={r.project_name}>
+                        {r.project_name}
+                      </div>
+                      <div className="text-[10px] text-studio-muted font-mono">
+                        {r.run_id}
+                      </div>
                     </td>
                     <td className="py-2.5 px-4 text-studio-muted truncate max-w-[140px]" title={r.model_identifier}>
                       {r.model_identifier}

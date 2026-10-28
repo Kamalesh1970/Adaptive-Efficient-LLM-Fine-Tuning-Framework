@@ -179,6 +179,24 @@ class TrainingJob:
 
         return event
 
+    def add_log(self, level: str, message: str, stage: Optional[str] = None) -> TrainingLogEntry:
+        """Appends a sanitized log entry for this job, persisting to SQLite."""
+        now = datetime.now(timezone.utc).isoformat()
+        clean_msg = _sanitize_string(message, [self._hf_token])
+        log_entry = TrainingLogEntry(
+            timestamp=now,
+            level=level.upper(),
+            message=clean_msg,
+            stage=stage or self.status.value,
+        )
+        with self._lock:
+            self.logs.append(log_entry)
+        try:
+            self.repo.add_log(self.run_id, log_entry)
+        except Exception as e:
+            logger.warning(f"Error persisting training log: {e}")
+        return log_entry
+
     def sync_to_db(self) -> None:
         """Persists current state snapshot to the SQLite repository."""
         try:
@@ -407,7 +425,20 @@ class JobManager:
     def _reconstruct_job_from_persisted(self, row: Dict[str, Any]) -> TrainingJob:
         """Rebuilds a TrainingJob instance from persisted SQLite state."""
         cfg_dict = row.get("config", {})
-        config = TrainingConfigSchema(**cfg_dict) if cfg_dict else TrainingConfigSchema()
+        if isinstance(cfg_dict, dict):
+            clean_cfg = {}
+            for k, v in cfg_dict.items():
+                if isinstance(v, str) and "." in v:
+                    for prefix in ("TrainingMethod.", "TrainingLengthType.", "QuantizationType."):
+                        if prefix in v:
+                            v = v.split(".")[-1].lower()
+                clean_cfg[k] = v
+            cfg_dict = clean_cfg
+
+        try:
+            config = TrainingConfigSchema(**cfg_dict) if cfg_dict else TrainingConfigSchema()
+        except Exception:
+            config = TrainingConfigSchema()
 
         output_dir = row.get("output_dir") or os.path.join(self.runs_output_dir, row["run_id"])
         job = TrainingJob(

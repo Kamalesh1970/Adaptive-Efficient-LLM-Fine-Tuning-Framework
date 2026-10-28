@@ -150,7 +150,9 @@ class RunRepository:
 
         config_obj = run_data.get("config", {})
         if hasattr(config_obj, "model_dump"):
-            config_dict = config_obj.model_dump()
+            config_dict = config_obj.model_dump(mode="json")
+        elif hasattr(config_obj, "dict"):
+            config_dict = config_obj.dict()
         elif isinstance(config_obj, dict):
             config_dict = config_obj
         else:

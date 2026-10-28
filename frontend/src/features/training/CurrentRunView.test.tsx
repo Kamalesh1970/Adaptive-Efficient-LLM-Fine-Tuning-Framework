@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { CurrentRunView } from './CurrentRunView';
 import * as api from '../../services/api';
-import { TrainingRunResponse, TrainingArtifactMetadata } from '../../types/training';
+import {
+  TrainingRunResponse,
+  TrainingArtifactMetadata,
+  TrainingEventListResponse,
+  TrainingLogListResponse,
+  CheckpointListResponse,
+} from '../../types/training';
 
 vi.mock('../../services/api');
 
@@ -76,9 +82,84 @@ const mockArtifacts: TrainingArtifactMetadata = {
   created_at: '2026-10-27T12:00:50Z',
 };
 
-describe('Phase 4: CurrentRunView Component Tests', () => {
+const mockEventsResponse: TrainingEventListResponse = {
+  run_id: 'run_abc123456789',
+  events: [
+    {
+      event_id: 'evt_001',
+      run_id: 'run_abc123456789',
+      timestamp: '2026-10-27T12:00:05Z',
+      event_type: 'run_started',
+      severity: 'info',
+      message: 'Training execution started on device cuda:0',
+      global_step: 0,
+      epoch: 0.0,
+      training_loss: null,
+      learning_rate: null,
+      checkpoint_path: null,
+    },
+    {
+      event_id: 'evt_002',
+      run_id: 'run_abc123456789',
+      timestamp: '2026-10-27T12:00:25Z',
+      event_type: 'training_step',
+      severity: 'info',
+      message: 'Step 25/50 — loss: 1.8452, epoch: 1.50',
+      global_step: 25,
+      epoch: 1.5,
+      training_loss: 1.8452,
+      learning_rate: 0.0002,
+      checkpoint_path: null,
+    },
+  ],
+  total: 2,
+  has_more: false,
+  next_cursor: null,
+};
+
+const mockLogsResponse: TrainingLogListResponse = {
+  run_id: 'run_abc123456789',
+  logs: [
+    {
+      timestamp: '2026-10-27T12:00:05Z',
+      level: 'INFO',
+      message: 'Allocating model tensors on device cuda:0',
+      stage: 'loading_model',
+    },
+    {
+      timestamp: '2026-10-27T12:00:25Z',
+      level: 'INFO',
+      message: 'Optimizer step 25 completed smoothly',
+      stage: 'training',
+    },
+  ],
+  total: 2,
+};
+
+const mockCheckpointsResponse: CheckpointListResponse = {
+  run_id: 'run_abc123456789',
+  checkpoints: [
+    {
+      checkpoint_id: 'final_adapter',
+      run_id: 'run_abc123456789',
+      step: 50,
+      epoch: 3.0,
+      path: 'artifacts/runs/run_abc123456789',
+      created_at: '2026-10-27T12:00:50Z',
+      size_bytes: 16777216,
+      files: ['adapter_config.json', 'adapter_model.safetensors'],
+      is_valid: true,
+    },
+  ],
+  total: 1,
+};
+
+describe('Phase 7: CurrentRunView Component Tests', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.fetchRunEvents).mockResolvedValue(mockEventsResponse);
+    vi.mocked(api.fetchRunLogs).mockResolvedValue(mockLogsResponse);
+    vi.mocked(api.fetchRunCheckpoints).mockResolvedValue(mockCheckpointsResponse);
   });
 
   it('renders placeholder when no run is active and navigates to configuration', () => {
@@ -93,7 +174,7 @@ describe('Phase 4: CurrentRunView Component Tests', () => {
     expect(onNavigate).toHaveBeenCalled();
   });
 
-  it('fetches and displays running job telemetry, progress bar, real loss, and step counts', async () => {
+  it('fetches and displays running job telemetry, progress bar, real loss, step counts, and speed/ETA', async () => {
     vi.mocked(api.fetchTrainingRun).mockResolvedValue(mockRunningResponse);
 
     await act(async () => {
@@ -112,6 +193,10 @@ describe('Phase 4: CurrentRunView Component Tests', () => {
     expect(screen.getByTestId('trainable-params-count')).toHaveTextContent('4,194,304');
     expect(screen.getByTestId('trainable-percent')).toHaveTextContent('(0.052%)');
 
+    // Speed & ETA check
+    expect(screen.getByTestId('speed-display')).toHaveTextContent('0.98 steps/s');
+    expect(screen.getByTestId('eta-display')).toHaveTextContent('ETA: 25s');
+
     // Telemetry stream table
     const table = screen.getByTestId('loss-history-table');
     expect(table).toBeInTheDocument();
@@ -120,6 +205,39 @@ describe('Phase 4: CurrentRunView Component Tests', () => {
 
     // Progress bar fill
     expect(screen.getByTestId('progress-bar-fill')).toHaveStyle({ width: '50%' });
+  });
+
+  it('switches between monitoring tabs (Events, Worker Logs, Checkpoints)', async () => {
+    vi.mocked(api.fetchTrainingRun).mockResolvedValue(mockRunningResponse);
+
+    await act(async () => {
+      render(<CurrentRunView activeRunId="run_abc123456789" />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-events')).toBeInTheDocument();
+    });
+
+    // 1. Switch to Events tab
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('tab-events'));
+    });
+    expect(screen.getByTestId('events-panel')).toBeInTheDocument();
+    expect(screen.getByText('Step 25/50 — loss: 1.8452, epoch: 1.50')).toBeInTheDocument();
+
+    // 2. Switch to Logs tab
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('tab-logs'));
+    });
+    expect(screen.getByTestId('logs-panel')).toBeInTheDocument();
+    expect(screen.getByText(/Allocating model tensors on device cuda:0/)).toBeInTheDocument();
+
+    // 3. Switch to Checkpoints tab
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('tab-checkpoints'));
+    });
+    expect(screen.getByTestId('checkpoints-panel')).toBeInTheDocument();
+    expect(screen.getByText('final_adapter')).toBeInTheDocument();
   });
 
   it('handles cancellation click and updates status without corrupting view', async () => {
