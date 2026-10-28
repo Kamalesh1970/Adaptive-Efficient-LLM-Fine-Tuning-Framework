@@ -68,7 +68,7 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
   const effectivePerDevice = perDeviceBatchSize * gradAccum;
 
   const detectedGpuCount =
-    backendOnline && systemStatus?.cuda_available && systemStatus.gpu_count > 0
+    backendOnline && (systemStatus?.gpu_available || systemStatus?.cuda_available) && systemStatus.gpu_count > 0
       ? systemStatus.gpu_count
       : (validationResult?.detected_device_count ?? null);
 
@@ -79,10 +79,10 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
 
   const hardwareName =
     backendOnline && systemStatus
-      ? systemStatus.cuda_available
-        ? systemStatus.primary_gpu_name || 'CUDA GPU Detected'
+      ? (systemStatus.gpu_available || systemStatus.cuda_available)
+        ? systemStatus.gpu_name || systemStatus.primary_gpu_name || 'CUDA GPU Detected'
         : 'CPU Only (No GPU Detected)'
-      : 'Unknown (Backend Offline)';
+      : 'Backend Unavailable';
 
   const hasEnvToken = config.hf_token_status === 'present_in_env';
   const hasInMemoryToken = Boolean(hfToken && hfToken.trim());
@@ -327,7 +327,31 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
         </div>
 
         {/* Hardware Status Breakdown - only when detected by backend */}
-        {backendOnline && systemStatus && (
+        {/* Hardware Status Breakdown */}
+        {!backendOnline ? (
+          <div
+            className="p-3 rounded-lg bg-studio-input/80 border border-rose-900/40 space-y-2 text-xs"
+            data-testid="hardware-status-box"
+          >
+            <div className="text-[10px] font-bold text-rose-400 uppercase tracking-wider font-mono flex items-center justify-between">
+              <span className="flex items-center gap-1">
+                <Cpu className="w-3 h-3 text-rose-400" /> Backend Status
+              </span>
+              <Badge variant="error">Offline</Badge>
+            </div>
+            <div className="text-[11px] space-y-1 font-mono">
+              <div className="flex justify-between text-studio-text">
+                <span className="text-studio-muted">Device:</span>
+                <span className="text-rose-400 font-semibold" data-testid="hardware-device-name">
+                  Backend Unavailable
+                </span>
+              </div>
+              <p className="text-[10px] text-studio-muted leading-tight">
+                Connect to FastAPI backend to inspect compute hardware and enable fine-tuning.
+              </p>
+            </div>
+          </div>
+        ) : systemStatus ? (
           <div
             className="p-3 rounded-lg bg-studio-input/80 border border-studio-border space-y-2 text-xs"
             data-testid="hardware-status-box"
@@ -336,16 +360,22 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               <span className="flex items-center gap-1">
                 <Cpu className="w-3 h-3 text-studio-teal" /> Hardware Detected
               </span>
-              <Badge variant={systemStatus.cuda_available ? 'success' : 'default'}>
-                {systemStatus.cuda_available ? 'GPU Accelerated' : 'CPU Mode'}
+              <Badge variant={systemStatus.gpu_available || systemStatus.cuda_available ? 'success' : 'default'}>
+                {systemStatus.gpu_available || systemStatus.cuda_available ? 'GPU Accelerated' : 'CPU Mode'}
               </Badge>
             </div>
 
             <div className="text-[11px] space-y-1 font-mono">
               <div className="flex justify-between text-studio-text">
                 <span className="text-studio-muted">Device:</span>
-                <span className="truncate max-w-[150px]" title={hardwareName}>
+                <span className="truncate max-w-[150px]" title={hardwareName} data-testid="hardware-device-name">
                   {hardwareName}
+                </span>
+              </div>
+              <div className="flex justify-between text-studio-text">
+                <span className="text-studio-muted">Device Type:</span>
+                <span className="text-studio-text font-semibold uppercase" data-testid="hardware-device-type">
+                  {(systemStatus.device_type || (systemStatus.gpu_available ? 'cuda' : 'cpu')).toUpperCase()}
                 </span>
               </div>
               <div className="flex justify-between text-studio-text">
@@ -354,6 +384,14 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
                   {systemStatus.gpu_count} device(s)
                 </span>
               </div>
+              {systemStatus.primary_gpu_vram_gb !== null && systemStatus.primary_gpu_vram_gb !== undefined && (
+                <div className="flex justify-between text-studio-text">
+                  <span className="text-studio-muted">VRAM Capacity:</span>
+                  <span className="text-studio-text font-semibold">
+                    {systemStatus.primary_gpu_vram_gb} GB
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between text-studio-text">
                 <span className="text-studio-muted">HF Token:</span>
                 <span className={hasHfToken ? 'text-emerald-400' : 'text-zinc-500'}>
@@ -367,11 +405,11 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               <div className="pt-2 border-t border-studio-border/40 text-[10px] font-mono space-y-1" data-testid="preview-qlora-compat">
                 <div className="flex justify-between items-center">
                   <span className="text-studio-muted">QLoRA Compatibility:</span>
-                  <Badge variant={systemStatus.cuda_available ? 'success' : 'error'}>
-                    {systemStatus.cuda_available ? 'Supported' : 'Unsupported'}
+                  <Badge variant={systemStatus.gpu_available || systemStatus.cuda_available ? 'success' : 'error'}>
+                    {systemStatus.gpu_available || systemStatus.cuda_available ? 'Supported' : 'Unsupported'}
                   </Badge>
                 </div>
-                {!systemStatus.cuda_available && (
+                {!(systemStatus.gpu_available || systemStatus.cuda_available) && (
                   <p className="text-[10px] text-rose-400 leading-tight">
                     QLoRA 4-bit fine-tuning requires CUDA GPU acceleration. Current hardware is CPU-only.
                   </p>
@@ -379,13 +417,13 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
               </div>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Action Area & Disabled State Notice */}
       <div className="pt-4 border-t border-studio-border/60 mt-4 space-y-2.5">
         {(() => {
-          const isQloraBlocked = config.training_method === 'qlora' && Boolean(backendOnline && systemStatus && !systemStatus.cuda_available);
+          const isQloraBlocked = config.training_method === 'qlora' && Boolean(backendOnline && systemStatus && !systemStatus.gpu_available && !systemStatus.cuda_available);
           const isDisabled = !isReady || isLaunching || isQloraBlocked;
 
           let btnTitle = 'Configure model and dataset to enable fine-tuning';

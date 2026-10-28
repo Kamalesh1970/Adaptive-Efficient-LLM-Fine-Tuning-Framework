@@ -571,11 +571,12 @@ export const ParametersCard: React.FC<ParametersCardProps> = ({
                         QLoRA 4-Bit Quantization & Precision
                       </span>
                       {(() => {
+                        const isGpu = Boolean(systemStatus && (systemStatus.gpu_available || systemStatus.cuda_available));
                         const compat = !backendOnline
                           ? { status: 'Not verified', variant: 'default' as const }
                           : !systemStatus
                           ? { status: 'Not verified', variant: 'default' as const }
-                          : !systemStatus.cuda_available
+                          : !isGpu
                           ? { status: 'Unsupported', variant: 'error' as const }
                           : { status: 'Supported', variant: 'success' as const };
                         return (
@@ -587,7 +588,7 @@ export const ParametersCard: React.FC<ParametersCardProps> = ({
                     </div>
 
                     {/* Compatibility honesty notice */}
-                    {backendOnline && systemStatus && !systemStatus.cuda_available && (
+                    {backendOnline && systemStatus && !(systemStatus.gpu_available || systemStatus.cuda_available) && (
                       <div
                         className="p-2.5 rounded bg-rose-950/30 border border-rose-500/30 text-[11px] text-rose-300 space-y-1"
                         data-testid="qlora-hardware-warning"

@@ -67,6 +67,9 @@ const mockSystemStatus: SystemStatus = {
   pytorch_version: '2.4.0',
   cuda_available: true,
   cuda_version: '12.1',
+  gpu_available: true,
+  device_type: 'cuda',
+  gpu_name: 'NVIDIA RTX 4090',
   gpu_count: 2,
   gpu_devices: [
     { index: 0, name: 'NVIDIA RTX 4090', total_vram_gb: 24.0, total_vram_mb: 24576 },

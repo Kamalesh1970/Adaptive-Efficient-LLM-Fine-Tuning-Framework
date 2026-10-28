@@ -61,6 +61,8 @@ export interface GpuDeviceInfo {
   name: string;
   total_vram_gb: number | null;
   total_vram_mb: number | null;
+  total_vram_bytes?: number | null;
+  free_vram_bytes?: number | null;
 }
 
 export interface SystemStatus {
@@ -68,12 +70,20 @@ export interface SystemStatus {
   os_platform: string;
   pytorch_available: boolean;
   pytorch_version: string | null;
+  cuda_build_version?: string | null;
   cuda_available: boolean;
   cuda_version: string | null;
+  gpu_available: boolean;
+  device_type: string;
+  gpu_name?: string | null;
   gpu_count: number;
   gpu_devices: GpuDeviceInfo[];
   primary_gpu_name: string | null;
   primary_gpu_vram_gb: number | null;
+  total_vram_bytes?: number | null;
+  free_vram_bytes?: number | null;
+  detection_status?: string;
+  diagnostic_message?: string | null;
   environment_type: string;
 }
 

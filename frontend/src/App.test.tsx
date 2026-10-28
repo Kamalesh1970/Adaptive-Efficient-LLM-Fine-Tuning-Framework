@@ -16,14 +16,21 @@ describe('Adaptive LLM Fine-Tuning Studio - Phase 0 UI Skeleton', () => {
     os_platform: 'Linux-x86_64',
     pytorch_available: true,
     pytorch_version: '2.3.0',
+    cuda_build_version: '12.1',
     cuda_available: true,
     cuda_version: '12.1',
+    gpu_available: true,
+    device_type: 'cuda',
+    gpu_name: 'NVIDIA RTX 4090',
     gpu_count: 1,
     gpu_devices: [
-      { index: 0, name: 'NVIDIA RTX 4090', total_vram_gb: 24.0, total_vram_mb: 24576.0 }
+      { index: 0, name: 'NVIDIA RTX 4090', total_vram_gb: 24.0, total_vram_mb: 24576.0, total_vram_bytes: 25769803776, free_vram_bytes: 21474836480 }
     ],
     primary_gpu_name: 'NVIDIA RTX 4090',
     primary_gpu_vram_gb: 24.0,
+    total_vram_bytes: 25769803776,
+    free_vram_bytes: 21474836480,
+    detection_status: 'gpu_detected',
     environment_type: 'cuda_accelerated',
   };
 
@@ -225,7 +232,7 @@ describe('Adaptive LLM Fine-Tuning Studio - Phase 0 UI Skeleton', () => {
     expect(screen.getByTestId('training-page')).toBeInTheDocument();
   });
 
-  it('handles backend offline status gracefully without throwing', async () => {
+  it('handles backend offline status gracefully without throwing and shows backend unavailable', async () => {
     vi.mocked(api.fetchHealth).mockRejectedValue(new Error('Connection refused'));
     vi.mocked(api.fetchSystemStatus).mockRejectedValue(new Error('Connection refused'));
 
@@ -235,6 +242,70 @@ describe('Adaptive LLM Fine-Tuning Studio - Phase 0 UI Skeleton', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('backend-status-badge')).toHaveTextContent('Offline');
+      expect(screen.getByTestId('sidebar-device-status')).toHaveTextContent('Backend Unavailable');
+      expect(screen.getByTestId('hardware-device-name')).toHaveTextContent('Backend Unavailable');
+      expect(screen.queryByText('CPU Mode')).not.toBeInTheDocument();
+    });
+  });
+
+  it('renders detected NVIDIA RTX 2050 GPU name when reported by backend', async () => {
+    const rtx2050Status = {
+      ...mockSystemStatus,
+      gpu_available: true,
+      device_type: 'cuda',
+      gpu_name: 'NVIDIA GeForce RTX 2050',
+      primary_gpu_name: 'NVIDIA GeForce RTX 2050',
+      primary_gpu_vram_gb: 3.68,
+      gpu_devices: [
+        {
+          index: 0,
+          name: 'NVIDIA GeForce RTX 2050',
+          total_vram_gb: 3.68,
+          total_vram_mb: 3768.56,
+          total_vram_bytes: 3951624192,
+          free_vram_bytes: 3854237696,
+        },
+      ],
+      detection_status: 'gpu_detected',
+    };
+    vi.mocked(api.fetchSystemStatus).mockResolvedValue(rtx2050Status);
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sidebar-device-status')).toHaveTextContent('NVIDIA GeForce RTX 2050');
+      expect(screen.getByTestId('hardware-device-name')).toHaveTextContent('NVIDIA GeForce RTX 2050');
+      expect(screen.getByTestId('hardware-device-type')).toHaveTextContent('CUDA');
+    });
+  });
+
+  it('distinguishes a genuine CPU-only environment from backend offline', async () => {
+    const cpuOnlyStatus = {
+      ...mockSystemStatus,
+      cuda_available: false,
+      gpu_available: false,
+      device_type: 'cpu',
+      gpu_count: 0,
+      gpu_name: null,
+      primary_gpu_name: null,
+      primary_gpu_vram_gb: null,
+      gpu_devices: [],
+      detection_status: 'cpu_only_build',
+      environment_type: 'cpu_only',
+    };
+    vi.mocked(api.fetchSystemStatus).mockResolvedValue(cpuOnlyStatus);
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('backend-status-badge')).toHaveTextContent('Connected');
+      expect(screen.getByTestId('sidebar-device-status')).toHaveTextContent('CPU Mode');
+      expect(screen.getByTestId('hardware-device-name')).toHaveTextContent('CPU Only (No GPU Detected)');
+      expect(screen.getByTestId('hardware-device-type')).toHaveTextContent('CPU');
     });
   });
 });

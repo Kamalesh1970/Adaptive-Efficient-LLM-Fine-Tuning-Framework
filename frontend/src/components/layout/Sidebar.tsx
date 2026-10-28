@@ -112,12 +112,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="text-[11px] text-studio-muted truncate">
             {backendOnline && systemStatus ? (
               <div className="space-y-0.5">
-                <div className="text-studio-text font-mono text-[10px] truncate">
-                  Py {systemStatus.python_version} - {systemStatus.cuda_available ? (systemStatus.primary_gpu_name || 'CUDA GPU') : 'CPU Mode'}
+                <div className="text-studio-text font-mono text-[10px] truncate" data-testid="sidebar-device-status">
+                  Py {systemStatus.python_version} • {systemStatus.gpu_available || systemStatus.cuda_available ? (systemStatus.gpu_name || systemStatus.primary_gpu_name || 'CUDA GPU') : 'CPU Mode'}
                 </div>
               </div>
             ) : (
-              <span className="text-amber-400/90 text-[10px]">FastAPI server unreachable</span>
+              <span className="text-amber-400/90 text-[10px]" data-testid="sidebar-device-status">Backend Unavailable</span>
             )}
           </div>
         </div>
