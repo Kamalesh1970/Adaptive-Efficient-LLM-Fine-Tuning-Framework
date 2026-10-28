@@ -17,6 +17,10 @@ import {
   PreflightCheckResponse,
   RunPlan,
   RunValidationResponse,
+  TrainingEventListResponse,
+  TrainingLogListResponse,
+  CheckpointListResponse,
+  RunHistoryListResponse,
 } from '../types/training';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -234,3 +238,59 @@ export async function validateRun(
     body: JSON.stringify(payload),
   });
 }
+
+// ---------------------------------------------------------
+// Phase 7: Real-Time Training Monitoring & History Endpoints
+// ---------------------------------------------------------
+
+export async function fetchRunHistory(
+  page = 1,
+  pageSize = 20,
+  status?: string
+): Promise<RunHistoryListResponse> {
+  const params = new URLSearchParams({
+    page: page.toString(),
+    page_size: pageSize.toString(),
+  });
+  if (status && status !== 'all') {
+    params.append('status', status);
+  }
+  return request<RunHistoryListResponse>(`/training/runs?${params.toString()}`);
+}
+
+export async function fetchRunEvents(
+  runId: string,
+  sinceEventId?: string,
+  limit = 100
+): Promise<TrainingEventListResponse> {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+  });
+  if (sinceEventId) {
+    params.append('since_event_id', sinceEventId);
+  }
+  return request<TrainingEventListResponse>(
+    `/training/runs/${encodeURIComponent(runId)}/events?${params.toString()}`
+  );
+}
+
+export async function fetchRunLogs(
+  runId: string,
+  limit = 500
+): Promise<TrainingLogListResponse> {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+  });
+  return request<TrainingLogListResponse>(
+    `/training/runs/${encodeURIComponent(runId)}/logs?${params.toString()}`
+  );
+}
+
+export async function fetchRunCheckpoints(
+  runId: string
+): Promise<CheckpointListResponse> {
+  return request<CheckpointListResponse>(
+    `/training/runs/${encodeURIComponent(runId)}/checkpoints`
+  );
+}
+

@@ -633,7 +633,11 @@ class TrainingRunResponse(BaseModel):
     total_params: Optional[int] = Field(default=None, description="Total model parameter count")
     trainable_percent: Optional[float] = Field(default=None, description="Percentage of parameters that are trainable")
     cancellable: bool = Field(default=False, description="Whether the run can be cancelled in its current state")
+    cancellation_requested: bool = Field(default=False, description="Whether cancellation has been requested and is pending")
     quantization_info: Optional[Dict[str, Any]] = Field(default=None, description="Quantization metadata if QLoRA is used")
+    latest_checkpoint: Optional[str] = Field(default=None, description="Identifier of latest checkpoint if saved")
+    learning_rate: Optional[float] = Field(default=None, description="Actual learning rate if reported")
+    last_log_time: Optional[str] = Field(default=None, description="Timestamp of latest log or metric update")
 
 
 class TrainingArtifactMetadata(BaseModel):

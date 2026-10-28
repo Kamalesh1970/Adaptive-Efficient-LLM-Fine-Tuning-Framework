@@ -4,6 +4,7 @@ API Route Handlers for Adaptive LLM Fine-Tuning Studio (Phase 0–6).
 
 from typing import Dict, Any, Optional
 import json
+import math
 from email.parser import BytesParser
 from email import policy
 from fastapi import APIRouter, HTTPException, status, Request, Query
@@ -20,7 +21,18 @@ from backend.app.schemas.training import (
     TrainingArtifactMetadata,
     TrainingMethod,
 )
+from backend.app.schemas.history import (
+    TrainingEvent,
+    TrainingEventListResponse,
+    TrainingLogEntry,
+    TrainingLogListResponse,
+    CheckpointMetadata,
+    CheckpointListResponse,
+    RunHistoryItem,
+    RunHistoryListResponse,
+)
 from backend.app.services.job_manager import get_job_manager
+from backend.app.services.run_repository import get_run_repository
 from backend.app.schemas.models import (
     ModelMetadata,
     ModelCatalogResponse,
@@ -610,6 +622,32 @@ def launch_training_run(payload: TrainingRunCreateRequest) -> TrainingRunRespons
 
 
 @router.get(
+    "/training/runs",
+    response_model=RunHistoryListResponse,
+    summary="List Persistent Training Run History",
+)
+def list_training_runs(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    status: Optional[str] = Query(None, description="Optional status filter"),
+) -> RunHistoryListResponse:
+    """
+    Returns paginated persistent run history ordered newest first.
+    Supports status filtering and survives backend restarts.
+    """
+    run_repo = get_run_repository()
+    items, total = run_repo.list_runs(page=page, page_size=page_size, status_filter=status)
+    total_pages = math.ceil(total / page_size) if total > 0 else 1
+    return RunHistoryListResponse(
+        runs=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get(
     "/training/runs/{run_id}",
     response_model=TrainingRunResponse,
     summary="Get Training Run Status and Telemetry",
@@ -624,6 +662,94 @@ def get_training_run(run_id: str) -> TrainingRunResponse:
             detail=f"Training run '{run_id}' not found.",
         )
     return job.to_response()
+
+
+@router.get(
+    "/training/runs/{run_id}/events",
+    response_model=TrainingEventListResponse,
+    summary="Get Training Lifecycle Events",
+)
+def get_training_events(
+    run_id: str,
+    since_event_id: Optional[str] = Query(None, description="Cursor for incremental retrieval"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum events to return"),
+) -> TrainingEventListResponse:
+    """
+    Returns recent training lifecycle events with optional cursor-based incremental retrieval.
+    """
+    job_mgr = get_job_manager()
+    job = job_mgr.get_job(run_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training run '{run_id}' not found.",
+        )
+    run_repo = get_run_repository()
+    events, total, has_more = run_repo.get_events(
+        run_id=run_id,
+        since_event_id=since_event_id,
+        limit=limit,
+    )
+    next_cursor = events[-1].event_id if events and has_more else None
+    return TrainingEventListResponse(
+        run_id=run_id,
+        events=events,
+        total=total,
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
+
+
+@router.get(
+    "/training/runs/{run_id}/logs",
+    response_model=TrainingLogListResponse,
+    summary="Get Sanitized Training Worker Logs",
+)
+def get_training_logs(
+    run_id: str,
+    limit: int = Query(500, ge=1, le=2000, description="Maximum log entries to return"),
+) -> TrainingLogListResponse:
+    """
+    Returns sanitized training logs in chronological order without exposing arbitrary files or credentials.
+    """
+    job_mgr = get_job_manager()
+    job = job_mgr.get_job(run_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training run '{run_id}' not found.",
+        )
+    run_repo = get_run_repository()
+    logs, total = run_repo.get_logs(run_id=run_id, limit=limit)
+    return TrainingLogListResponse(
+        run_id=run_id,
+        logs=logs,
+        total=total,
+    )
+
+
+@router.get(
+    "/training/runs/{run_id}/checkpoints",
+    response_model=CheckpointListResponse,
+    summary="Get Verified Training Checkpoints",
+)
+def get_training_checkpoints(run_id: str) -> CheckpointListResponse:
+    """
+    Returns verified checkpoint metadata for a run based on files that genuinely exist on disk.
+    """
+    job_mgr = get_job_manager()
+    job = job_mgr.get_job(run_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training run '{run_id}' not found.",
+        )
+    checkpoints = job_mgr.get_checkpoints(run_id)
+    return CheckpointListResponse(
+        run_id=run_id,
+        checkpoints=checkpoints,
+        total=len(checkpoints),
+    )
 
 
 @router.post(

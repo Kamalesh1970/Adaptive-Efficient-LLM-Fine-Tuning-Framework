@@ -7,7 +7,7 @@ import { PrivacyPolicy } from './pages/PrivacyPolicy';
 import { TermsConditions } from './pages/TermsConditions';
 import { SystemStatus, HealthStatus } from './types/training';
 import { fetchHealth, fetchSystemStatus } from './services/api';
-import { Clock } from 'lucide-react';
+import { TrainingHistoryView } from './features/training/TrainingHistoryView';
 
 export const App: React.FC = () => {
   const [activeNav, setActiveNav] = useState('new-training');
@@ -86,18 +86,12 @@ export const App: React.FC = () => {
             )}
 
             {activeTab === 'history' && (
-              <div className="flex-1 flex items-center justify-center p-8 text-center" data-testid="history-placeholder">
-                <div className="max-w-md space-y-3 p-8 rounded-xl bg-studio-card border border-studio-cardBorder">
-                  <Clock className="w-10 h-10 text-studio-muted mx-auto" />
-                  <h2 className="text-base font-bold text-studio-text">Training Runs History</h2>
-                  <p className="text-xs text-studio-muted leading-relaxed">
-                    Archived fine-tuning checkpoints, hyperparameter logs, and evaluation metrics will be indexed here.
-                  </p>
-                  <div className="inline-block px-2 py-0.5 rounded text-[10px] font-mono bg-studio-cardBorder text-studio-muted">
-                    Planned for Phase 5: Evaluation & Experiment Tracking
-                  </div>
-                </div>
-              </div>
+              <TrainingHistoryView
+                onSelectRun={(runId) => {
+                  setCurrentRunId(runId);
+                  setActiveTab('current-run');
+                }}
+              />
             )}
           </>
         )}

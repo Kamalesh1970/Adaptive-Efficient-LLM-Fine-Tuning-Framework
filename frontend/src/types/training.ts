@@ -312,3 +312,91 @@ export interface RunValidationResponse {
   checks: PreflightCheckResult[];
   plan: RunPlan;
 }
+
+// ─── Phase 7: Real-Time Training Monitoring & History Types ──────────────────
+
+export type EventSeverity = 'info' | 'warning' | 'error';
+
+export interface TrainingEvent {
+  event_id: string;
+  run_id: string;
+  timestamp: string;
+  event_type: string;
+  severity: EventSeverity;
+  message: string;
+  global_step?: number | null;
+  epoch?: number | null;
+  training_loss?: number | null;
+  learning_rate?: number | null;
+  checkpoint_path?: string | null;
+}
+
+export interface TrainingEventListResponse {
+  run_id: string;
+  events: TrainingEvent[];
+  total: number;
+  has_more: boolean;
+  next_cursor?: string | null;
+}
+
+export interface TrainingLogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  stage?: string | null;
+}
+
+export interface TrainingLogListResponse {
+  run_id: string;
+  logs: TrainingLogEntry[];
+  total: number;
+}
+
+export interface CheckpointMetadata {
+  checkpoint_id: string;
+  run_id: string;
+  step?: number | null;
+  epoch?: number | null;
+  path: string;
+  created_at: string;
+  size_bytes: number;
+  files: string[];
+  is_valid: boolean;
+}
+
+export interface CheckpointListResponse {
+  run_id: string;
+  checkpoints: CheckpointMetadata[];
+  total: number;
+}
+
+export interface RunHistoryItem {
+  run_id: string;
+  project_name: string;
+  model_identifier: string;
+  dataset_reference: string;
+  training_method: string;
+  status: string;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  elapsed_time_seconds: number;
+  current_step: number;
+  max_steps: number;
+  current_epoch?: number | null;
+  num_epochs?: number | null;
+  current_loss?: number | null;
+  learning_rate?: number | null;
+  error_message?: string | null;
+  device: string;
+  latest_checkpoint?: string | null;
+}
+
+export interface RunHistoryListResponse {
+  runs: RunHistoryItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
