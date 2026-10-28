@@ -15,6 +15,8 @@ import {
   TrainingRunResponse,
   TrainingArtifactMetadata,
   PreflightCheckResponse,
+  RunPlan,
+  RunValidationResponse,
 } from '../types/training';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -200,6 +202,34 @@ export async function runPreflight(
     payload['hf_token'] = hfToken.trim();
   }
   return request<PreflightCheckResponse>('/training/preflight', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchRunPreview(
+  config: TrainingConfig,
+  hfToken?: string | null,
+): Promise<RunPlan> {
+  const payload: Record<string, unknown> = { config };
+  if (hfToken && hfToken.trim()) {
+    payload['hf_token'] = hfToken.trim();
+  }
+  return request<RunPlan>('/training/preview', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function validateRun(
+  config: TrainingConfig,
+  hfToken?: string | null,
+): Promise<RunValidationResponse> {
+  const payload: Record<string, unknown> = { config };
+  if (hfToken && hfToken.trim()) {
+    payload['hf_token'] = hfToken.trim();
+  }
+  return request<RunValidationResponse>('/training/validate-run', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

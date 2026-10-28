@@ -226,6 +226,7 @@ export interface TrainingMetricPoint {
 export interface TrainingRunCreateRequest {
   config: TrainingConfig;
   hf_token?: string | null;
+  idempotency_key?: string | null;
 }
 
 export interface TrainingRunResponse {
@@ -284,4 +285,30 @@ export interface PreflightCheckResponse {
   warning_count: number;
   method: string | null;
   estimated_vram_gb: number | null;
+  vram_status?: string | null;
+  vram_message?: string | null;
+}
+
+export interface RunPlan {
+  run_configuration: Record<string, unknown>;
+  selected_model?: Record<string, unknown> | null;
+  dataset_reference?: Record<string, unknown> | null;
+  fine_tuning_method: string;
+  device_information: Record<string, unknown>;
+  validation_results: PreflightCheckResponse;
+  warnings: string[];
+  resource_compatibility: Record<string, unknown>;
+  output_configuration: Record<string, unknown>;
+  can_launch: boolean;
+  blocking_count: number;
+  warning_count: number;
+  created_at: string;
+}
+
+export interface RunValidationResponse {
+  can_launch: boolean;
+  blocking_count: number;
+  warning_count: number;
+  checks: PreflightCheckResult[];
+  plan: RunPlan;
 }

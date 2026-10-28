@@ -188,6 +188,8 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
     return () => window.removeEventListener('keydown', handleKey);
   }, [isOpen, onClose]);
 
+  const [explicitConfirmed, setExplicitConfirmed] = useState(true);
+
   if (!isOpen) return null;
 
   const canLaunch = result?.can_launch ?? false;
@@ -337,6 +339,24 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
           )}
         </div>
 
+        {/* Explicit Confirmation Checkbox */}
+        {!isLoading && result && (
+          <div className="px-5 py-2.5 bg-studio-input/40 border-t border-studio-border/40 shrink-0">
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-studio-text select-none">
+              <input
+                type="checkbox"
+                checked={explicitConfirmed}
+                onChange={(e) => setExplicitConfirmed(e.target.checked)}
+                className="w-3.5 h-3.5 rounded bg-studio-input border-studio-border text-studio-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                data-testid="checkbox-explicit-confirm"
+              />
+              <span className="text-[11px] text-studio-muted">
+                I have reviewed the resource compatibility checks, warnings, and launch configuration.
+              </span>
+            </label>
+          </div>
+        )}
+
         {/* Footer actions */}
         <div className="px-5 py-4 border-t border-studio-border shrink-0 flex items-center justify-between gap-3">
           <button
@@ -362,15 +382,17 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
 
             <button
               type="button"
-              disabled={!canLaunch || isLoading}
+              disabled={!canLaunch || isLoading || !explicitConfirmed}
               onClick={onConfirmLaunch}
               title={
                 !canLaunch
                   ? `${blocking} blocking issue(s) must be resolved before launching`
+                  : !explicitConfirmed
+                  ? 'Please confirm that you have reviewed the configuration'
                   : 'Launch real LoRA / QLoRA fine-tuning'
               }
               className={`px-4 py-2 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition-all shadow-md ${
-                canLaunch && !isLoading
+                canLaunch && !isLoading && explicitConfirmed
                   ? 'bg-studio-accent hover:bg-studio-accentHover text-studio-bg shadow-studio-accent/20 cursor-pointer'
                   : 'bg-studio-cardBorder/60 text-studio-muted border border-studio-border/60 cursor-not-allowed opacity-60'
               }`}

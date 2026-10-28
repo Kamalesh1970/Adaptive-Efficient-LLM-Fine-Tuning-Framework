@@ -116,6 +116,9 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
   const [isPreflightLoading, setIsPreflightLoading] = useState(false);
   const [preflightResult, setPreflightResult] = useState<PreflightCheckResponse | null>(null);
   const [preflightError, setPreflightError] = useState<string | null>(null);
+  const [createdRunId, setCreatedRunId] = useState<string | null>(null);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const idempotencyKeyRef = React.useRef<string | null>(null);
 
   // Load model catalog from backend
   const loadCatalog = useCallback(async () => {
@@ -459,16 +462,27 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
     setIsPreflightOpen(false);
     setIsLaunching(true);
     setErrorMessage(null);
+    setLaunchError(null);
+
+    // Prevent accidental duplicate submissions with idempotency key
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current = `run_idemp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+
     try {
       const run = await launchTrainingRun({
         config,
         hf_token: hfToken.trim() || undefined,
+        idempotency_key: idempotencyKeyRef.current,
       });
+      setCreatedRunId(run.run_id);
+      idempotencyKeyRef.current = null;
       if (onLaunchRun) {
         onLaunchRun(run.run_id);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to launch training run';
+      setLaunchError(msg);
       setErrorMessage(msg);
     } finally {
       setIsLaunching(false);
@@ -566,6 +580,10 @@ export const TrainingPage: React.FC<TrainingPageProps> = ({
           splitResult={splitResult}
           hfToken={hfToken}
           isLaunching={isLaunching}
+          isValidating={isValidatingModel || isPreflightLoading}
+          preflightResult={preflightResult}
+          launchError={launchError}
+          createdRunId={createdRunId}
           onStartTraining={handleOpenPreflight}
         />
       </div>

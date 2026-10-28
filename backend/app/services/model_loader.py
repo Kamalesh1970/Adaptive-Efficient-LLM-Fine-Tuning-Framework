@@ -69,6 +69,13 @@ def clear_test_model_registry() -> None:
     _test_model_registry.clear()
 
 
+def is_test_model(model_identifier: Optional[str]) -> bool:
+    """Returns True if the model identifier is registered in the synthetic test registry."""
+    if not model_identifier:
+        return False
+    return model_identifier in _test_model_registry
+
+
 def resolve_execution_device(requested: Optional[str] = None) -> str:
     """
     Resolves execution device. Returns 'cuda:0' or 'cuda' only if CUDA hardware is available.

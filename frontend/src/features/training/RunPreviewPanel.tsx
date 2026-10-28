@@ -12,6 +12,7 @@ import {
   Sliders,
   Play,
   Loader2,
+  Package,
 } from 'lucide-react';
 import { Badge } from '../../components/common/Badge';
 import {
@@ -22,6 +23,8 @@ import {
   ModelValidationResponse,
   DatasetValidationReport,
   DatasetSplitResult,
+  PreflightCheckResponse,
+  RunPlan,
 } from '../../types/training';
 
 interface RunPreviewPanelProps {
@@ -35,6 +38,12 @@ interface RunPreviewPanelProps {
   splitResult?: DatasetSplitResult | null;
   hfToken?: string;
   isLaunching?: boolean;
+  isValidating?: boolean;
+  preflightResult?: PreflightCheckResponse | null;
+  runPlan?: RunPlan | null;
+  launchStatus?: 'incomplete' | 'validating' | 'blocked' | 'ready' | 'launching' | 'failed' | 'created';
+  launchError?: string | null;
+  createdRunId?: string | null;
   onStartTraining?: () => void;
 }
 
@@ -49,6 +58,10 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
   splitResult,
   hfToken = '',
   isLaunching = false,
+  isValidating = false,
+  preflightResult = null,
+  launchError = null,
+  createdRunId = null,
   onStartTraining,
 }) => {
   const hasModel = Boolean(config.model_identifier);
@@ -87,6 +100,152 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
   const hasEnvToken = config.hf_token_status === 'present_in_env';
   const hasInMemoryToken = Boolean(hfToken && hfToken.trim());
   const hasHfToken = hasInMemoryToken || hasEnvToken;
+
+  // Consolidated Warnings
+  const warningsList: string[] = [];
+  if (validationResult?.warnings) {
+    warningsList.push(...validationResult.warnings);
+  }
+  if (modelValidation?.warnings) {
+    warningsList.push(...modelValidation.warnings);
+  }
+  if (selectedDatasetReport?.warnings) {
+    warningsList.push(...selectedDatasetReport.warnings);
+  }
+  if (preflightResult?.checks) {
+    for (const c of preflightResult.checks) {
+      if (c.status === 'warn') {
+        warningsList.push(c.message);
+      }
+    }
+  }
+  const uniqueWarnings = Array.from(new Set(warningsList));
+  const warningsCount = uniqueWarnings.length;
+
+  // Launch Readiness Calculation
+  let launchReadiness: 'Validated' | 'Invalid' | 'Unsupported' | 'Unknown' | 'Not yet checked';
+  let readinessDescription = '';
+
+  if (!backendOnline) {
+    launchReadiness = 'Unknown';
+    readinessDescription = 'FastAPI backend unavailable';
+  } else if (!hasModel || !hasDataset) {
+    launchReadiness = 'Not yet checked';
+    readinessDescription = 'Model and dataset selection required';
+  } else if (validationResult && !validationResult.is_valid) {
+    launchReadiness = 'Invalid';
+    readinessDescription = `${validationResult.errors.length} configuration error(s)`;
+  } else if (modelValidation && !modelValidation.is_valid) {
+    if (modelValidation.compatibility_status === 'incompatible') {
+      launchReadiness = 'Unsupported';
+      readinessDescription = `Model incompatible with ${config.training_method}`;
+    } else {
+      launchReadiness = 'Invalid';
+      readinessDescription = 'Model authentication / access requirements not met';
+    }
+  } else if (selectedDatasetReport && !selectedDatasetReport.is_valid) {
+    launchReadiness = 'Invalid';
+    readinessDescription = `Dataset contains ${selectedDatasetReport.invalid_sample_count} invalid sample(s)`;
+  } else if (config.training_method === 'qlora' && systemStatus && !systemStatus.gpu_available && !systemStatus.cuda_available) {
+    launchReadiness = 'Unsupported';
+    readinessDescription = 'QLoRA 4-bit fine-tuning requires CUDA GPU';
+  } else if (preflightResult) {
+    if (preflightResult.can_launch) {
+      launchReadiness = 'Validated';
+      readinessDescription = 'All preflight resource checks passed';
+    } else {
+      launchReadiness = 'Invalid';
+      readinessDescription = `${preflightResult.blocking_count} blocking preflight failure(s)`;
+    }
+  } else if (isReady) {
+    launchReadiness = 'Validated';
+    readinessDescription = 'Ready for preflight validation and launch';
+  } else {
+    launchReadiness = 'Not yet checked';
+    readinessDescription = 'Awaiting validation checks';
+  }
+
+  // Dependency Compatibility Calculation
+  let depCompatStatus: 'Validated' | 'Invalid' | 'Unsupported' | 'Unknown' | 'Not yet checked';
+  let depCompatMessage = '';
+
+  if (!backendOnline) {
+    depCompatStatus = 'Unknown';
+    depCompatMessage = 'Backend offline';
+  } else if (preflightResult) {
+    const mlCheck = preflightResult.checks.find((c) => c.check_id === 'ml_core_deps');
+    const bnbCheck = preflightResult.checks.find((c) => c.check_id === 'bitsandbytes');
+
+    if (mlCheck?.status === 'fail' || bnbCheck?.status === 'fail') {
+      depCompatStatus = 'Invalid';
+      depCompatMessage = mlCheck?.status === 'fail' ? mlCheck.message : (bnbCheck?.message || 'Missing dependencies');
+    } else if (config.training_method === 'qlora' && systemStatus && !systemStatus.gpu_available && !systemStatus.cuda_available) {
+      depCompatStatus = 'Unsupported';
+      depCompatMessage = 'QLoRA requires CUDA GPU acceleration';
+    } else {
+      depCompatStatus = 'Validated';
+      depCompatMessage = 'PyTorch, transformers, peft verified';
+    }
+  } else if (config.training_method === 'qlora' && systemStatus && !systemStatus.gpu_available && !systemStatus.cuda_available) {
+    depCompatStatus = 'Unsupported';
+    depCompatMessage = 'QLoRA requires CUDA GPU acceleration';
+  } else if (systemStatus?.pytorch_available) {
+    depCompatStatus = 'Validated';
+    depCompatMessage = `PyTorch ${systemStatus.pytorch_version || 'installed'}`;
+  } else if (systemStatus && !systemStatus.pytorch_available) {
+    depCompatStatus = 'Invalid';
+    depCompatMessage = 'PyTorch not installed in backend runtime';
+  } else {
+    depCompatStatus = 'Not yet checked';
+    depCompatMessage = 'Awaiting preflight check';
+  }
+
+  // Launch Control State Determination
+  let launchControlState:
+    | 'Configuration incomplete'
+    | 'Validation in progress'
+    | 'Blocked by validation'
+    | 'Ready for confirmation'
+    | 'Launching'
+    | 'Launch failed'
+    | 'Run created';
+
+  if (createdRunId) {
+    launchControlState = 'Run created';
+  } else if (isLaunching) {
+    launchControlState = 'Launching';
+  } else if (launchError) {
+    launchControlState = 'Launch failed';
+  } else if (isValidating) {
+    launchControlState = 'Validation in progress';
+  } else if (!hasModel || !hasDataset) {
+    launchControlState = 'Configuration incomplete';
+  } else if (
+    launchReadiness === 'Invalid' ||
+    launchReadiness === 'Unsupported' ||
+    (validationResult && !validationResult.is_valid)
+  ) {
+    launchControlState = 'Blocked by validation';
+  } else if (isReady || launchReadiness === 'Validated') {
+    launchControlState = 'Ready for confirmation';
+  } else {
+    launchControlState = 'Configuration incomplete';
+  }
+
+  const getReadinessVariant = (status: 'Validated' | 'Invalid' | 'Unsupported' | 'Unknown' | 'Not yet checked') => {
+    switch (status) {
+      case 'Validated':
+        return 'success';
+      case 'Invalid':
+      case 'Unsupported':
+        return 'error';
+      case 'Unknown':
+        return 'warning';
+      case 'Not yet checked':
+      default:
+        return 'default';
+    }
+  };
 
   return (
     <div
@@ -134,6 +293,62 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
                 )
               ) : (
                 <span className="text-studio-muted text-[11px] font-mono">Unchecked</span>
+              )}
+            </div>
+          </div>
+
+          {/* Launch Readiness Status */}
+          <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
+            <span className="text-studio-muted text-[11px] flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-studio-muted" /> Readiness:
+            </span>
+            <div className="text-right">
+              <Badge
+                variant={getReadinessVariant(launchReadiness)}
+                data-testid="preview-launch-readiness"
+              >
+                {launchReadiness}
+              </Badge>
+              {readinessDescription && (
+                <span className="block text-[10px] text-studio-muted font-mono truncate max-w-[150px] text-right mt-0.5" title={readinessDescription}>
+                  {readinessDescription}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Dependency Compatibility */}
+          <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
+            <span className="text-studio-muted text-[11px] flex items-center gap-1.5">
+              <Package className="w-3.5 h-3.5 text-studio-muted" /> Dependencies:
+            </span>
+            <div className="text-right">
+              <Badge
+                variant={getReadinessVariant(depCompatStatus)}
+                data-testid="preview-dependency-compat"
+              >
+                {depCompatStatus}
+              </Badge>
+              {depCompatMessage && (
+                <span className="block text-[10px] text-studio-muted font-mono truncate max-w-[140px] text-right mt-0.5" title={depCompatMessage}>
+                  {depCompatMessage}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Validation Warnings */}
+          <div className="flex items-center justify-between py-1 border-b border-studio-border/30">
+            <span className="text-studio-muted text-[11px] flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 text-studio-muted" /> Warnings:
+            </span>
+            <div className="text-right" data-testid="preview-warnings">
+              {warningsCount > 0 ? (
+                <Badge variant="warning">
+                  {warningsCount} Warning(s)
+                </Badge>
+              ) : (
+                <span className="font-mono text-studio-muted text-[11px]">None</span>
               )}
             </div>
           </div>
@@ -422,14 +637,69 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
 
       {/* Action Area & Disabled State Notice */}
       <div className="pt-4 border-t border-studio-border/60 mt-4 space-y-2.5">
+        {/* Launch Control State Indicator */}
+        <div className="flex items-center justify-between text-[11px] font-mono py-1 px-0.5">
+          <span className="text-studio-muted">Launch Control:</span>
+          <span
+            className={`font-semibold ${
+              launchControlState === 'Ready for confirmation' || launchControlState === 'Run created'
+                ? 'text-emerald-400'
+                : launchControlState === 'Blocked by validation' || launchControlState === 'Launch failed'
+                ? 'text-rose-400'
+                : launchControlState === 'Validation in progress' || launchControlState === 'Launching'
+                ? 'text-amber-400'
+                : 'text-zinc-500'
+            }`}
+            data-testid="launch-control-state"
+          >
+            {launchControlState}
+          </span>
+        </div>
+
+        {/* Created Run Banner */}
+        {createdRunId && (
+          <div
+            className="p-2.5 rounded-lg bg-emerald-950/20 border border-emerald-500/30 text-[11px] font-mono text-emerald-300 space-y-1"
+            data-testid="created-run-banner"
+          >
+            <div className="flex items-center gap-1.5 font-bold text-emerald-400">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Run Created Successfully</span>
+            </div>
+            <div className="text-[10px] break-all">
+              ID: <span className="text-studio-text font-bold" data-testid="created-run-id">{createdRunId}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Launch Error Banner */}
+        {launchError && !isLaunching && (
+          <div
+            className="p-2.5 rounded-lg bg-rose-950/30 border border-rose-500/30 text-[11px] font-mono text-rose-300 space-y-1"
+            data-testid="launch-error-banner"
+          >
+            <div className="flex items-center gap-1.5 font-bold text-rose-400">
+              <XCircle className="w-3.5 h-3.5 shrink-0" />
+              <span>Launch Failed</span>
+            </div>
+            <p className="text-[10px] text-rose-300/90 leading-tight break-words">{launchError}</p>
+          </div>
+        )}
+
         {(() => {
           const isQloraBlocked = config.training_method === 'qlora' && Boolean(backendOnline && systemStatus && !systemStatus.gpu_available && !systemStatus.cuda_available);
-          const isDisabled = !isReady || isLaunching || isQloraBlocked;
+          const isDisabled = !isReady || isLaunching || isQloraBlocked || launchControlState === 'Blocked by validation' || launchControlState === 'Configuration incomplete' || launchControlState === 'Validation in progress';
 
           let btnTitle = 'Configure model and dataset to enable fine-tuning';
           if (isQloraBlocked) {
             btnTitle = 'QLoRA 4-bit fine-tuning requires CUDA GPU acceleration. Current hardware is CPU-only.';
-          } else if (isReady) {
+          } else if (launchControlState === 'Blocked by validation') {
+            btnTitle = 'Blocked by validation: resolve errors before launching.';
+          } else if (launchControlState === 'Configuration incomplete') {
+            btnTitle = 'Select base model and dataset to enable fine-tuning.';
+          } else if (launchControlState === 'Validation in progress') {
+            btnTitle = 'Validation in progress...';
+          } else if (isReady || launchControlState === 'Ready for confirmation') {
             btnTitle = config.training_method === 'qlora' ? 'Launch real QLoRA 4-bit fine-tuning' : 'Launch real LoRA fine-tuning';
           }
 
@@ -450,6 +720,16 @@ export const RunPreviewPanel: React.FC<RunPreviewPanelProps> = ({
                 <>
                   <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
                   <span>Launching Fine-Tuning...</span>
+                </>
+              ) : isValidating ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                  <span>Validation in progress...</span>
+                </>
+              ) : launchControlState === 'Run created' ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-400" />
+                  <span>Run Created</span>
                 </>
               ) : !isDisabled ? (
                 <>

@@ -574,6 +574,121 @@ cd frontend && npm run build
 
 ---
 
+## Phase 6: Training Run Preview, Resource Validation & Launch Control
+
+### 1. Run Preview Behavior
+The persistent **Run Summary Preview** panel integrates live backend verification data to provide real-time pre-launch transparency:
+- **Selected Model Identifier**: Shows active model ID, parameter scale, family, and compatibility badges.
+- **Selected Dataset Reference**: Displays uploaded or hub dataset, valid samples count, detected schema, and train/eval splits.
+- **Fine-Tuning Method**: Displays selected method (`LoRA`, `QLoRA`, `Full Weights`).
+- **Training Duration**: Displays step count or epoch count.
+- **Effective Batch Size**: Dynamically computed as $\text{per\_device\_batch\_size} \times \text{gradient\_accumulation\_steps} \times \text{detected\_gpu\_count}$.
+- **Context Length & Learning Rate**: Verified token limit and optimizer learning rate.
+- **LoRA / Quantization Configuration**: Adapter rank ($r$), alpha ($\alpha$), dropout, target modules, quant format (`NF4`/`FP4`), double quantization, and compute dtype.
+- **Actual Hardware & Device**: Genuine detected GPU (e.g. `NVIDIA GeForce RTX 2050 (3.68 GB VRAM)`), visible device count, or explicit `CPU Mode`.
+- **Dependency Compatibility**: Explicit status (`Validated`, `Invalid`, `Unsupported`, `Unknown`, `Not yet checked`) reflecting PyTorch, transformers, PEFT, and bitsandbytes availability.
+- **Validation Warnings**: Aggregates non-blocking warnings across configuration, dataset, model, and preflight checks.
+- **Launch Readiness**: Unambiguous status indicator (`Validated`, `Invalid`, `Unsupported`, `Unknown`, `Not yet checked`).
+
+### 2. Pre-Launch Validation Service (Preflight)
+The preflight engine (`backend/app/services/preflight_service.py`) executes an ordered sequence of validation checks before any training run is initiated:
+1. **Configuration Schema**: Validates parameter types, learning rates, batch sizes, and context limits against Pydantic schema constraints.
+2. **Model Selection & Registration**: Verifies model exists in local catalog or hub, confirms method compatibility, checks gated access requirements, and verifies context limits.
+3. **Dataset Validation**: Verifies dataset is registered, formatted, and contains > 0 valid samples. Blocks on invalid sample errors.
+4. **Compute Device & CUDA Availability**: Inspects actual PyTorch CUDA availability, device count, device names, and VRAM capacity. Accurately flags detection errors.
+5. **Method–Device Compatibility**: Enforces that QLoRA 4-bit fine-tuning requires CUDA hardware. Blocks QLoRA on CPU-only hosts with actionable guidance.
+6. **Required Training Dependencies**: Checks for core trio (`torch`, `transformers`, `peft`). Distinguishes missing core dependencies from missing quantization libraries.
+7. **Quantization Dependencies**: Verifies `bitsandbytes` installation when QLoRA is selected; skips when LoRA is selected. Missing `bitsandbytes` is never conflated with missing GPU hardware.
+8. **Output Directory Permissions**: Tests filesystem write permissions for artifacts directory using sentinel write checks.
+9. **Resource Compatibility Assessment (VRAM)**: Computes heuristic memory estimates based on model parameter scale, precision, and batch size. If parameter scale or hardware is unknown, reports VRAM compatibility honestly as `unknown`. Never fabricates memory guarantees.
+10. **Hugging Face Token Status**: Checks for environment or in-memory credentials when gated models (e.g. Llama-3) are selected.
+
+### 3. Structured RunPlan
+`POST /api/training/preview` generates a serializable `RunPlan` object containing:
+- `run_configuration`: Sanitized training hyperparameters (passwords, tokens, and secret keys strictly redacted).
+- `selected_model`: Model metadata summary.
+- `dataset_reference`: Dataset validation report summary.
+- `fine_tuning_method`: Target fine-tuning method (`lora`, `qlora`, `full_finetuning`).
+- `device_information`: Verified compute hardware specifications.
+- `validation_results`: Complete ordered check results (`checks`, `can_launch`, `blocking_count`, `warning_count`).
+- `warnings`: Aggregated non-blocking warnings.
+- `resource_compatibility`: Structured breakdown of dependencies, VRAM estimate, and compatibility status.
+- `output_configuration`: Safe relative artifact paths and logging settings.
+- `can_launch`: Boolean readiness determination.
+
+### 4. Launch Control Lifecycle & Duplicate Prevention
+Training launch (`POST /api/training/runs`) enforces server-side validation and idempotency:
+1. **Server-Side Verification**: Runs preflight validation on the backend. If any blocking check fails, returns HTTP 400 with detailed blocking issues.
+2. **Explicit User Confirmation**: Preflight checklist modal requires explicit user review and confirmation before the launch request is dispatched.
+3. **Duplicate Submission Prevention**: Clients transmit a unique `idempotency_key`. Repeated requests with the same key return the existing training job without starting a duplicate process.
+4. **Actual Run Identifier**: Returns the real server-generated `run_id` (e.g. `run_20261028_...`). The frontend transitions directly to `CurrentRunView` to stream genuine telemetry.
+5. **Launch Control States**:
+   - `Configuration incomplete`: Model or dataset not selected (button disabled).
+   - `Validation in progress`: Validating parameters or running preflight checks (disabled with spinner).
+   - `Blocked by validation`: Blocking issues detected (disabled with explanation).
+   - `Ready for confirmation`: All checks passed, ready for user review (button enabled).
+   - `Launching`: Request in flight (disabled with spinner).
+   - `Launch failed`: Request failed or rejected by server (shows error banner, allows retry).
+   - `Run created`: Genuine run created and displayed.
+
+### 5. API Endpoints
+
+#### `POST /api/training/preflight`
+- **Description**: Executes pre-launch preflight resource and configuration checks.
+- **Request**: `TrainingConfigSchema` (with optional `hf_token`).
+- **Response**: `PreflightCheckResponse` (`checks`, `can_launch`, `blocking_count`, `warning_count`, `estimated_vram_gb`, `vram_status`, `vram_message`).
+
+#### `POST /api/training/preview`
+- **Description**: Generates a structured, secret-sanitized `RunPlan`.
+- **Request**: `{"config": TrainingConfigSchema, "hf_token": Optional[str]}`.
+- **Response**: `RunPlan`.
+
+#### `POST /api/training/validate-run`
+- **Description**: Validates a training run and returns preflight checks alongside the generated `RunPlan`.
+- **Request**: `{"config": TrainingConfigSchema, "hf_token": Optional[str]}`.
+- **Response**: `RunValidationResponse` (`can_launch`, `blocking_count`, `warning_count`, `checks`, `plan`).
+
+#### `POST /api/training/runs`
+- **Description**: Validates configuration, enforces preflight checks, prevents duplicate submissions via `idempotency_key`, and launches training asynchronously.
+- **Request**: `TrainingRunCreateRequest` (`config`, `hf_token`, `idempotency_key`).
+- **Status Codes**:
+  - `201 Created`: Training job registered and launched.
+  - `400 Bad Request`: Configuration invalid or rejected by preflight validation.
+
+### 6. Testing Commands
+
+Run Phase 6 backend test suite:
+```bash
+pytest backend/tests/test_phase6_preflight_and_launch.py -v
+```
+
+Run preflight endpoint unit tests:
+```bash
+pytest backend/tests/test_preflight.py -v
+```
+
+Run full backend test suite:
+```bash
+pytest -q
+```
+
+Run Phase 6 frontend test suite:
+```bash
+cd frontend && npm test -- src/features/training/LaunchControlAndPreview.test.tsx --run
+```
+
+Run full frontend test suite:
+```bash
+cd frontend && npm test -- --run
+```
+
+Run frontend production build:
+```bash
+cd frontend && npm run build
+```
+
+---
+
 ## Development Roadmap
 
 - [x] **Phase 0**: Project Foundation, FastAPI Backend Services, System Hardware Diagnostics, Training Configuration Schemas, and Dark-Themed Training UI Skeleton.
@@ -582,7 +697,8 @@ cd frontend && npm run build
 - [x] **Phase 3**: Training Parameters & Configuration Management System (Simple/Advanced modes, LoRA adapter settings, YAML presets, effective batch size calculation, and full schema validation).
 - [x] **Phase 4**: Real LoRA Fine-Tuning Engine (Modular model loader, PEFT adapter injection, parameter freezing, dataset preparation, optimizer loop, streaming telemetry, cancellation, artifact validation, and Current Run view).
 - [x] **Phase 5**: QLoRA and 4-Bit Quantization (Typed quantization schema, bitsandbytes 4-bit NF4/FP4 loading, k-bit model preparation via PEFT, double quantization, compute dtype selection, honest hardware verification, streaming telemetry, and verified adapter artifacts).
-- [ ] **Phase 6**: Model Evaluation, Benchmark Suites, and Training History.
-- [ ] **Phase 7**: Model Exporter (LoRA merge, GGUF/vLLM export, and deployment).
+- [x] **Phase 6**: Training Run Preview, Resource Validation & Launch Control (Pre-launch validation service, real run preview, structured RunPlan, explicit confirmation, duplicate launch prevention, and launch lifecycle integration).
+- [ ] **Phase 7**: Model Evaluation, Benchmark Suites, and Training History.
+- [ ] **Phase 8**: Model Exporter (LoRA merge, GGUF/vLLM export, and deployment).
 
 
