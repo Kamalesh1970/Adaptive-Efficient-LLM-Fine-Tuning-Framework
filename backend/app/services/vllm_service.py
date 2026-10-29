@@ -161,6 +161,22 @@ class VLLMService:
         rows = self.repository.list_serving_instances()
         return [ServingInstanceRecord(**r) for r in rows]
 
+    @staticmethod
+    def validate_target_url(url: str) -> bool:
+        """
+        Validates that target URL is strictly a loopback address (127.0.0.1, localhost, ::1)
+        to prevent Server-Side Request Forgery (SSRF) against internal or cloud metadata services.
+        """
+        import urllib.parse
+        try:
+            parsed = urllib.parse.urlparse(url)
+            host = (parsed.hostname or "").lower()
+            if host in ("127.0.0.1", "localhost", "::1"):
+                return True
+            return False
+        except Exception:
+            return False
+
     def test_smoke_inference(
         self,
         instance_id: str,
