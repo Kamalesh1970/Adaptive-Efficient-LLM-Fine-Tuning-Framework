@@ -757,12 +757,17 @@ Run all Phase 9 automated end-to-end integration tests:
 .venv/bin/pytest backend/tests/test_phase9_e2e_integration.py -v
 ```
 
-Run full backend test suite (233 tests across all phases):
+Run all Phase 10 platform readiness tests:
+```bash
+.venv/bin/pytest backend/tests/test_phase10_platform_readiness.py -v
+```
+
+Run full backend test suite (244 tests across all phases):
 ```bash
 .venv/bin/pytest -v
 ```
 
-Run full frontend test suite (121 tests across 12 suites):
+Run full frontend test suite (127 tests across 13 suites):
 ```bash
 cd frontend && npm test -- --run
 ```
@@ -770,6 +775,139 @@ cd frontend && npm test -- --run
 Run frontend production build & TypeScript check:
 ```bash
 cd frontend && npm run build
+```
+
+---
+
+## Phase 10: Containerization, Kubernetes, CI/CD, Advanced Quantization, Model Export, and Multi-GPU Support
+
+### 1. Docker Containerization & Profiles
+
+The platform provides multi-stage, non-root, production-grade Docker containers:
+- **Backend Dockerfile** (`Dockerfile`): Multi-stage Python 3.12-slim build, non-root system user `appuser` (UID 10001), automated healthcheck via `curl -f http://localhost:8000/api/health`, and clean PID 1 signal forwarding via exec form `ENTRYPOINT`.
+- **Frontend Dockerfile** (`frontend/Dockerfile`): Multi-stage Node 20 builder -> Nginx 1.27-alpine runner. Serves production SPA with `/api/` reverse proxy and `/healthz` probe.
+- **Docker Compose** (`compose.yaml`): Multi-service environment with profiles:
+  - Default profile: `backend` + `frontend`
+  - GPU profile (`--profile gpu`): `backend-gpu` with NVIDIA Container Toolkit reservation
+  - Inference profile (`--profile inference`): `inference-serving` running vLLM
+
+Build commands:
+```bash
+# Build backend container
+docker build -t adaptive-studio-backend:latest .
+
+# Build frontend container
+docker build -t adaptive-studio-frontend:latest ./frontend
+
+# Run default stack via Compose
+docker compose up -d
+
+# Run with GPU and inference profiles enabled
+docker compose --profile gpu --profile inference up -d
+```
+
+### 2. CI/CD Workflows (`.github/workflows/`)
+
+- **Continuous Integration** (`ci.yml`):
+  - `backend-ci`: Python 3.12 matrix, dependency installation, pytest suite with coverage checks.
+  - `frontend-ci`: Node 20 matrix, `npm ci`, ESLint, Vitest test suite, and production `vite build`.
+  - `kubernetes-validate`: Validates all 12 Kubernetes YAML manifests using yamllint and dry-run syntax checks.
+  - `docker-build`: Test builds both backend and frontend Docker containers using `docker/build-push-action`.
+- **Continuous Delivery** (`cd.yml`):
+  - Triggered on semantic release tags (`v*.*.*`).
+  - Builds and publishes multi-arch container images to GitHub Container Registry (`ghcr.io`).
+  - Applies Kubernetes manifests to staging cluster and provisions approval gate for production promotion.
+
+### 3. Kubernetes Manifests (`deploy/kubernetes/`)
+
+12 declarative Kubernetes manifests configured under the dedicated `adaptive-studio` namespace:
+- `namespace.yaml`: Dedicated `adaptive-studio` namespace with security labels.
+- `configmap.yaml`: Application runtime settings (CORS, upload directories, environment flags).
+- `secret.yaml`: Masked credentials for Hugging Face and external registries.
+- `pvc.yaml`: Persistent volume claim for datasets, artifacts, runs, and GGUF exports.
+- `network-policy.yaml`: Default deny ingress with explicit allows for ingress traffic and internal services.
+- `backend-deployment.yaml`: Replicated backend Deployment with liveness/readiness HTTP probes, resource requests/limits, security context, and PVC mounts.
+- `backend-service.yaml`: Internal ClusterIP service routing to port 8000.
+- `frontend-deployment.yaml`: Nginx SPA Deployment with health checks and non-root security context.
+- `frontend-service.yaml`: Frontend ClusterIP service routing to port 80.
+- `ingress.yaml`: Ingress controller configuration routing `/api/` to backend and `/` to frontend.
+- `training-job.yaml`: Standalone CPU fine-tuning Job template.
+- `gpu-training-job.yaml`: GPU-accelerated fine-tuning Job template reserving `nvidia.com/gpu: 1`.
+
+Validation API endpoint:
+```bash
+curl http://localhost:8000/api/system/kubernetes/validate
+```
+
+### 4. Advanced Post-Training Quantization
+
+Capability discovery, validation, and execution across major quantization formats:
+- **BitsAndBytes 4-bit (QLoRA)**: NF4/FP4 weight quantization with optional double quantization (requires CUDA).
+- **BitsAndBytes 8-bit (LLM.int8())**: Outlier-aware int8 matrix decomposition (requires CUDA).
+- **GPTQ**: Second-order accurate post-training quantization requiring calibration dataset (requires CUDA).
+- **AWQ**: Activation-aware weight quantization protecting salient weights (requires CUDA).
+- **GGUF**: Integer scale quantization with CPU execution support.
+
+Capabilities discovery API:
+```bash
+curl http://localhost:8000/api/quantization/capabilities
+```
+
+Execute post-training quantization job:
+```bash
+curl -X POST http://localhost:8000/api/quantization/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "method": "gguf",
+    "source_reference": "run_001",
+    "bit_width": 4,
+    "quant_type": "int4",
+    "output_format": "safetensors"
+  }'
+```
+
+### 5. GGUF Model Export Pipeline (GGUF v3)
+
+Exports fine-tuned adapter weights merged with base architecture into self-contained GGUF binary format:
+- **Binary Header**: Conforms to GGUF v3 specification (`0x46554747` magic bytes, version 3, tensor count, metadata KV pairs).
+- **Alignment**: 32-byte tensor data alignment for memory-mapped `llama.cpp` inference.
+- **Verification**: Post-export integrity checks and SHA-256 checksum calculation.
+- **Path Traversal Protection**: Export filenames and download requests are strictly checked to prevent path traversal or directory escaping.
+
+Initiate GGUF export:
+```bash
+curl -X POST http://localhost:8000/api/export/gguf \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_artifact_id": "art_valid_001",
+    "base_model_identifier": "google/gemma-2b",
+    "quantization_type": "Q4_K_M"
+  }'
+```
+
+### 6. vLLM Model Serving & Smoke Inference
+
+- **Capability Detection**: Truthfully detects vLLM package installation and CUDA hardware requirements.
+- **Lifecycle Management**: Tracks instance states (`validating`, `starting`, `ready`, `stopped`, `failed`).
+- **Smoke Inference**: Bounded latency smoke tests with SSRF-protected local HTTP client (blocks non-loopback addresses).
+
+Discover serving capabilities:
+```bash
+curl http://localhost:8000/api/serving/vllm/capabilities
+```
+
+### 7. Multi-GPU Distributed Training Diagnostics
+
+- **Truthful Hardware Detection**: Probes real PyTorch CUDA device count, GPU device names, memory, and compute capabilities.
+- **Strategy Validation**:
+  - `none`: Single-device training (CPU or single GPU).
+  - `ddp`: Distributed Data Parallel for identical data-parallel scaling across $\ge 2$ GPUs.
+  - `fsdp`: Fully Sharded Data Parallel for sharding parameters, gradients, and optimizer states across $\ge 2$ GPUs.
+- **Graceful Rejection**: Multi-GPU strategies requested on CPU-only or single-GPU hosts are rejected early during preflight with clean HTTP 422 errors instead of silent failure.
+
+Distributed hardware diagnostics API:
+```bash
+curl http://localhost:8000/api/distributed/system-report
 ```
 
 ---
@@ -786,7 +924,8 @@ cd frontend && npm run build
 - [x] **Phase 7**: Live Training Monitoring, Event Streaming & SQLite Run History.
 - [x] **Phase 8**: Artifact Discovery, Integrity Validation, Standalone ZIP Export & Model Evaluation.
 - [x] **Phase 9**: End-to-End Integration, Reliability, Hardware Reconciliation, and Production Readiness.
-- [ ] **Phase 10**: Advanced Quantization, Model Export (GGUF/vLLM), Multi-GPU, and Deployment.
+- [x] **Phase 10**: Advanced Quantization, Model Export (GGUF/vLLM), Multi-GPU, and Deployment.
+
 
 
 

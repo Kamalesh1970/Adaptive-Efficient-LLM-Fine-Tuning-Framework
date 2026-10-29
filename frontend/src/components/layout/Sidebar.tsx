@@ -6,6 +6,7 @@ import {
   Database, 
   History, 
   Settings, 
+  Server,
   Cpu,
   Sparkles
 } from 'lucide-react';
@@ -32,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'new-training', label: 'New Training', icon: PlusCircle },
     { id: 'models', label: 'Models & Artifacts', icon: Box },
     { id: 'evaluation', label: 'Model Evaluation', icon: BarChart2 },
+    { id: 'platform', label: 'Platform & Infra', icon: Server },
     { id: 'datasets', label: 'Datasets', icon: Database },
     { id: 'history', label: 'Training History', icon: History },
     { id: 'settings', label: 'Settings', icon: Settings },

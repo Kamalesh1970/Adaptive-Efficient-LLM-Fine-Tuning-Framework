@@ -588,6 +588,8 @@ class RunRepository:
                     base_model_identifier, is_loadable, load_error, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(artifact_id) DO UPDATE SET
+                    file_reference = excluded.file_reference,
+                    base_model_identifier = excluded.base_model_identifier,
                     validation_status = excluded.validation_status,
                     export_status = excluded.export_status,
                     exported_package_path = excluded.exported_package_path,

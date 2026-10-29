@@ -1,7 +1,7 @@
 import React from 'react';
-import { Sliders, Activity, Clock, Box, BarChart2, LucideIcon } from 'lucide-react';
+import { Sliders, Activity, Clock, Box, BarChart2, Server, LucideIcon } from 'lucide-react';
 
-export type StudioTab = 'configure' | 'current-run' | 'history' | 'artifacts' | 'evaluation';
+export type StudioTab = 'configure' | 'current-run' | 'history' | 'artifacts' | 'evaluation' | 'platform';
 
 interface HeaderProps {
   activeTab: StudioTab;
@@ -22,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
     { id: 'history', label: 'History', icon: Clock },
     { id: 'artifacts', label: 'Artifacts', icon: Box },
     { id: 'evaluation', label: 'Evaluation', icon: BarChart2 },
+    { id: 'platform', label: 'Platform & Infra', icon: Server, badge: 'Phase 10' },
   ];
 
   return (

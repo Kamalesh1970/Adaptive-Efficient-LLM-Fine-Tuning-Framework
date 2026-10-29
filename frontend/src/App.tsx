@@ -5,6 +5,7 @@ import { TrainingPage } from './features/training/TrainingPage';
 import { CurrentRunView } from './features/training/CurrentRunView';
 import { ArtifactsView } from './features/artifacts/ArtifactsView';
 import { EvaluationView } from './features/evaluation/EvaluationView';
+import { PlatformOperationsView } from './features/platform/PlatformOperationsView';
 import { PrivacyPolicy } from './pages/PrivacyPolicy';
 import { TermsConditions } from './pages/TermsConditions';
 import { SystemStatus, HealthStatus } from './types/training';
@@ -52,6 +53,8 @@ export const App: React.FC = () => {
       setActiveTab('evaluation');
     } else if (nav === 'history') {
       setActiveTab('history');
+    } else if (nav === 'platform') {
+      setActiveTab('platform');
     }
   };
 
@@ -65,6 +68,8 @@ export const App: React.FC = () => {
       setActiveNav('evaluation');
     } else if (tab === 'history') {
       setActiveNav('history');
+    } else if (tab === 'platform') {
+      setActiveNav('platform');
     }
   };
 
@@ -149,6 +154,8 @@ export const App: React.FC = () => {
                 }}
               />
             )}
+
+            {activeTab === 'platform' && <PlatformOperationsView />}
           </>
         )}
       </div>

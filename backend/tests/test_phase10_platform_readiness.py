@@ -7,7 +7,7 @@ vLLM Model Serving, and Multi-GPU Capabilities.
 import os
 import json
 import struct
-import tempfile
+import uuid
 import pytest
 from fastapi.testclient import TestClient
 
@@ -206,15 +206,16 @@ def test_gguf_export_binary_generation_and_verification(tmp_path):
     service = GGUFExportService(export_dir=str(export_dir))
 
     # Register mock artifact in ArtifactService
-    art_svc = service.artifact_service
-    fake_run_dir = tmp_path / "run_001"
+    art_id = f"art_valid_{uuid.uuid4().hex[:8]}"
+    run_id = f"run_{uuid.uuid4().hex[:8]}"
+    fake_run_dir = tmp_path / run_id
     fake_run_dir.mkdir()
     fake_weights = fake_run_dir / "adapter_model.bin"
     fake_weights.write_bytes(b"dummy_weights_content")
 
     art_meta = ArtifactMetadata(
-        artifact_id="art_valid_001",
-        run_id="run_001",
+        artifact_id=art_id,
+        run_id=run_id,
         artifact_type="lora_adapter",
         model_identifier="google/gemma-2b",
         fine_tuning_method="lora",
@@ -228,7 +229,7 @@ def test_gguf_export_binary_generation_and_verification(tmp_path):
     get_run_repository().save_or_update_artifact(art_meta)
 
     config = GGUFExportConfig(
-        source_artifact_id="art_valid_001",
+        source_artifact_id=art_id,
         base_model_identifier="google/gemma-2b",
         quantization_type=GGUFQuantizationType.Q4_K_M,
         output_filename="gemma_q4_k_m.gguf",

@@ -29,6 +29,12 @@ import {
   EvaluationRun,
   EvaluationListResponse,
   EvaluationResultsResponse,
+  KubernetesValidationResponse,
+  QuantizationCapability,
+  QuantizationJobRecord,
+  GGUFExportJobRecord,
+  ServingInstanceRecord,
+  MultiGPUSystemReport,
 } from '../types/training';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -376,6 +382,83 @@ export async function cancelEvaluation(evaluationId: string): Promise<Evaluation
 
 export async function fetchEvaluationResults(evaluationId: string): Promise<EvaluationResultsResponse> {
   return request<EvaluationResultsResponse>(`/evaluations/${encodeURIComponent(evaluationId)}/results`);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 10: Kubernetes, Quantization, GGUF Export, Serving, and Multi-GPU
+// ---------------------------------------------------------------------------
+
+export async function validateKubernetesManifests(): Promise<KubernetesValidationResponse> {
+  return request<KubernetesValidationResponse>('/system/kubernetes/validate');
+}
+
+export async function fetchQuantizationCapabilities(): Promise<QuantizationCapability[]> {
+  return request<QuantizationCapability[]>('/quantization/capabilities');
+}
+
+export async function createQuantizationJob(config: {
+  method: string;
+  source_reference: string;
+  bit_width?: number;
+  quant_type?: string;
+  group_size?: number;
+  output_format?: string;
+}): Promise<QuantizationJobRecord> {
+  return request<QuantizationJobRecord>('/quantization/jobs', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function fetchQuantizationJobs(): Promise<QuantizationJobRecord[]> {
+  return request<QuantizationJobRecord[]>('/quantization/jobs');
+}
+
+export async function createGGUFExportJob(config: {
+  source_artifact_id: string;
+  base_model_identifier?: string | null;
+  quantization_type?: string;
+  output_filename?: string | null;
+}): Promise<GGUFExportJobRecord> {
+  return request<GGUFExportJobRecord>('/export/gguf', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function fetchGGUFExportJobs(): Promise<GGUFExportJobRecord[]> {
+  return request<GGUFExportJobRecord[]>('/export/gguf/jobs');
+}
+
+export async function fetchServingCapabilities(): Promise<{
+  is_available: boolean;
+  version?: string | null;
+  cuda_available: boolean;
+  supported_model_types: string[];
+  reason_if_unavailable?: string | null;
+}> {
+  return request('/serving/vllm/capabilities');
+}
+
+export async function createServingInstance(config: {
+  model_reference: string;
+  host?: string;
+  port?: number;
+  gpu_memory_utilization?: number;
+  max_model_len?: number;
+}): Promise<ServingInstanceRecord> {
+  return request<ServingInstanceRecord>('/serving/vllm/instances', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function fetchServingInstances(): Promise<ServingInstanceRecord[]> {
+  return request<ServingInstanceRecord[]>('/serving/vllm/instances');
+}
+
+export async function fetchMultiGPUSystemReport(): Promise<MultiGPUSystemReport> {
+  return request<MultiGPUSystemReport>('/distributed/system-report');
 }
 
 
