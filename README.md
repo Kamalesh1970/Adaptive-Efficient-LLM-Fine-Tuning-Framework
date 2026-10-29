@@ -689,6 +689,91 @@ cd frontend && npm run build
 
 ---
 
+## Phase 7: Live Training Monitoring, Event Streaming & Run History
+
+### 1. Telemetry and Event Monitoring
+- **Live Loss Curve & Telemetry**: Dynamic charting of step-by-step training loss, learning rate, and epochs with zero fake metrics.
+- **Event Feeds & Logs**: Chronological event logs tracking state transitions (`validating`, `loading_model`, `preparing_dataset`, `training`, `saving_artifacts`, `completed`, `failed`, `cancelled`).
+- **Checkpoints Tracking**: Periodic checkpoint indexing with step number, timestamp, file reference, and verification status.
+
+### 2. SQLite Run Repository & Persistence
+- SQLite database (`artifacts/runs/runs.db`) stores run metadata, sanitized configurations, metrics history, checkpoints, and evaluation results.
+- **Restart Survival**: Run history and evaluation records survive server restarts without data loss.
+
+---
+
+## Phase 8: Artifact Management, Export & Model Evaluation
+
+### 1. Artifact Discovery & Integrity Validation
+- **Discovery**: Real-time discovery of adapter weights (`adapter_model.bin` / `adapter_model.safetensors`), `adapter_config.json`, `training_config.json`, and training metrics.
+- **Integrity Validation**: SHA-256 checksum generation and verification of required PEFT files; corrupt or missing files flag validation failure.
+
+### 2. Standalone Package Export
+- **Archive Generation**: Packages verified artifacts into portable ZIP archives (`/api/artifacts/{id}/export`).
+- **Security Protections**: Strictly excludes secrets, Hugging Face tokens, private keys, parent directory symlinks, and absolute path traversals.
+- **Direct Download**: HTTP streaming download endpoint (`GET /api/artifacts/{id}/download`).
+
+### 3. Quantitative Model Evaluation & Baseline Comparison
+- **Real Model Inference**: Computes cross-entropy evaluation loss, perplexity ($e^{\mathcal{L}_{\text{eval}}}$), and generation throughput (tokens/sec).
+- **Baseline Comparison**: Compares fine-tuned adapter against the frozen base model on identical evaluation subsets, computing loss delta and percentage improvement.
+
+---
+
+## Phase 9: End-to-End Integration, Reliability & Production Readiness
+
+### 1. End-to-End Integration Matrix
+
+| Module / Workflow | Frontend Entry Point | Backend Service / Endpoint | Persistence & Storage | Integration Status |
+|---|---|---|---|---|
+| **Model Selection** | `ModelSelection.tsx` | `GET /api/models`, `POST /api/models/validate` | In-memory catalog + HuggingFace Hub | Verified |
+| **Dataset Upload & Normalization** | `DatasetSelection.tsx` | `POST /api/datasets/upload`, `GET /api/datasets/{id}` | `artifacts/datasets/` JSON storage | Verified |
+| **Configuration & Preflight** | `ParametersAndConfig.tsx`, `PreflightModal.tsx` | `POST /api/training/preflight`, `POST /api/training/preview` | Client session state & validated schemas | Verified |
+| **Training Launch & Lifecycle** | `LaunchControlAndPreview.tsx` | `POST /api/training/runs` | JobManager + `artifacts/runs/runs.db` | Verified |
+| **Telemetry & Run Monitoring** | `CurrentRunView.tsx` | `GET /api/training/runs/{id}`, `/events`, `/logs` | SQLite run table + event records | Verified |
+| **Artifact Management & Export** | `ArtifactsView.tsx` | `GET /api/artifacts`, `POST /api/artifacts/{id}/export` | `artifacts/runs/{id}/` + exported ZIPs | Verified |
+| **Model Evaluation** | `EvaluationView.tsx` | `POST /api/evaluations`, `GET /api/evaluations` | SQLite evaluation table | Verified |
+| **Run & Evaluation History** | `TrainingHistoryView.tsx` | `GET /api/training/history` | SQLite paginated query | Verified |
+
+### 2. Hardware Detection & GPU Troubleshooting
+The studio enforces strict truth-in-hardware reporting:
+- **Environment Status**: The system detects hardware using PyTorch and `nvidia-smi`.
+- **Known Driver Issue (`nvidia-smi` exit code 9)**:
+  - When the Linux NVIDIA kernel module is unloaded or mismatched (`NVIDIA-SMI couldn't communicate with the NVIDIA driver`), PyTorch reports `torch.cuda.is_available() == False`.
+  - The framework does **not** assume the NVIDIA RTX 2050 is available, does not claim GPU acceleration, and operates honestly in `cpu_only` mode with `detection_status: cuda_unavailable`.
+- **Distinction Between Capabilities**:
+  - **GPU Detection**: Hardware detection query via PyTorch CUDA.
+  - **GPU Training**: Training execution using `device="cuda"`.
+  - **QLoRA Compatibility**: Requires genuine CUDA hardware and `bitsandbytes`. When CUDA is unavailable, QLoRA is blocked with an actionable explanation.
+
+### 3. Reliability and Restart Recovery
+- **Terminal State Immutability**: Runs and evaluations in terminal states (`completed`, `failed`, `cancelled`) cannot transition back to active states.
+- **Dead Worker Reconciliation**: If the backend restarts while a run was in an active state (`training`, `validating`, `preparing_dataset`), startup reconciliation detects that the thread no longer exists and marks the run `failed` with an informative recovery message ("interrupted by server restart").
+- **Duplicate Prevention**: Re-launching an existing running job ID or evaluation is blocked with HTTP 400.
+
+### 4. Verification & Testing Commands
+
+Run all Phase 9 automated end-to-end integration tests:
+```bash
+.venv/bin/pytest backend/tests/test_phase9_e2e_integration.py -v
+```
+
+Run full backend test suite (233 tests across all phases):
+```bash
+.venv/bin/pytest -v
+```
+
+Run full frontend test suite (121 tests across 12 suites):
+```bash
+cd frontend && npm test -- --run
+```
+
+Run frontend production build & TypeScript check:
+```bash
+cd frontend && npm run build
+```
+
+---
+
 ## Development Roadmap
 
 - [x] **Phase 0**: Project Foundation, FastAPI Backend Services, System Hardware Diagnostics, Training Configuration Schemas, and Dark-Themed Training UI Skeleton.
@@ -698,7 +783,10 @@ cd frontend && npm run build
 - [x] **Phase 4**: Real LoRA Fine-Tuning Engine (Modular model loader, PEFT adapter injection, parameter freezing, dataset preparation, optimizer loop, streaming telemetry, cancellation, artifact validation, and Current Run view).
 - [x] **Phase 5**: QLoRA and 4-Bit Quantization (Typed quantization schema, bitsandbytes 4-bit NF4/FP4 loading, k-bit model preparation via PEFT, double quantization, compute dtype selection, honest hardware verification, streaming telemetry, and verified adapter artifacts).
 - [x] **Phase 6**: Training Run Preview, Resource Validation & Launch Control (Pre-launch validation service, real run preview, structured RunPlan, explicit confirmation, duplicate launch prevention, and launch lifecycle integration).
-- [ ] **Phase 7**: Model Evaluation, Benchmark Suites, and Training History.
-- [ ] **Phase 8**: Model Exporter (LoRA merge, GGUF/vLLM export, and deployment).
+- [x] **Phase 7**: Live Training Monitoring, Event Streaming & SQLite Run History.
+- [x] **Phase 8**: Artifact Discovery, Integrity Validation, Standalone ZIP Export & Model Evaluation.
+- [x] **Phase 9**: End-to-End Integration, Reliability, Hardware Reconciliation, and Production Readiness.
+- [ ] **Phase 10**: Advanced Quantization, Model Export (GGUF/vLLM), Multi-GPU, and Deployment.
+
 
 
