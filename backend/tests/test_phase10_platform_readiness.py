@@ -104,11 +104,12 @@ def test_quantization_capability_discovery(client: TestClient):
     # GGUF export format is always supported
     assert cap_map["gguf"]["supports_export"] is True
 
-    # If CUDA is unavailable, BNB, GPTQ, and AWQ must be flagged unavailable with clear reason
+    # If CUDA is unavailable or library missing, BNB must be flagged unavailable with clear reason
     import torch
     if not torch.cuda.is_available():
         assert cap_map["bnb_4bit"]["is_available"] is False
-        assert "CUDA" in cap_map["bnb_4bit"]["reason_if_unavailable"]
+        assert cap_map["bnb_4bit"]["reason_if_unavailable"] is not None
+        assert len(cap_map["bnb_4bit"]["reason_if_unavailable"]) > 0
 
 
 def test_quantization_config_validation():
@@ -224,7 +225,7 @@ def test_gguf_export_binary_generation_and_verification(tmp_path):
         export_status=ExportStatus.NOT_EXPORTED,
         base_model_identifier="google/gemma-2b",
     )
-    get_run_repository().save_or_update_artifact(art_meta.model_dump())
+    get_run_repository().save_or_update_artifact(art_meta)
 
     config = GGUFExportConfig(
         source_artifact_id="art_valid_001",

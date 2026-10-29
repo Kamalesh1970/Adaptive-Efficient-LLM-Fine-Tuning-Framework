@@ -939,11 +939,11 @@ class RunRepository:
                 (
                     export_id,
                     str(export_type),
-                    export_data.get("source_reference", ""),
+                    export_data.get("source_reference") or export_data.get("source_artifact_id", ""),
                     str(quant_type) if quant_type else None,
                     str(status_val),
                     config_json,
-                    export_data.get("output_path"),
+                    export_data.get("output_path") or export_data.get("output_filepath"),
                     export_data.get("file_size_bytes"),
                     export_data.get("sha256"),
                     export_data.get("created_at", now),
@@ -962,6 +962,8 @@ class RunRepository:
             d = dict(row)
             d["config"] = json.loads(d.get("config_json") or "{}")
             d["logs"] = json.loads(d.get("logs_json") or "[]")
+            d["source_artifact_id"] = d.get("source_reference")
+            d["output_filepath"] = d.get("output_path")
             return d
 
     def list_export_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
@@ -974,6 +976,8 @@ class RunRepository:
                 d = dict(r)
                 d["config"] = json.loads(d.get("config_json") or "{}")
                 d["logs"] = json.loads(d.get("logs_json") or "[]")
+                d["source_artifact_id"] = d.get("source_reference")
+                d["output_filepath"] = d.get("output_path")
                 result.append(d)
             return result
 

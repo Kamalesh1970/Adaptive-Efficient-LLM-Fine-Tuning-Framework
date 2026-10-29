@@ -49,7 +49,8 @@ class GGUFExportConfig(BaseModel):
 class GGUFExportJobRecord(BaseModel):
     """Persistent state record for a GGUF export operation."""
     export_id: str
-    source_artifact_id: str
+    source_artifact_id: Optional[str] = None
+    source_reference: Optional[str] = None
     status: str
     config: GGUFExportConfig
     output_path: Optional[str] = None
@@ -62,6 +63,11 @@ class GGUFExportJobRecord(BaseModel):
     error_message: Optional[str] = None
 
     def model_post_init(self, __context: Any) -> None:
+        if self.source_reference and not self.source_artifact_id:
+            self.source_artifact_id = self.source_reference
+        elif self.source_artifact_id and not self.source_reference:
+            self.source_reference = self.source_artifact_id
+
         if self.output_path and not self.output_filepath:
             self.output_filepath = self.output_path
         elif self.output_filepath and not self.output_path:

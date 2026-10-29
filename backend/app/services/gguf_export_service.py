@@ -198,7 +198,7 @@ class GGUFExportService:
             logs=[f"[{now}] GGUF export job created for artifact '{config.source_artifact_id}' ({config.quantization_type.value})."],
         )
 
-        self.repository.save_or_update_export_job(job.model_dump())
+        self.repository.save_or_update_export_job(job.model_dump(mode="json"))
         return job
 
     def start_export(self, export_id: str, background: bool = True) -> GGUFExportJobRecord:
@@ -250,14 +250,14 @@ class GGUFExportService:
         try:
             log_msg(f"Initiating GGUF conversion for target quant={config.quantization_type.value}...")
             job.status = "running"
-            self.repository.save_or_update_export_job(job.model_dump())
+            self.repository.save_or_update_export_job(job.model_dump(mode="json"))
 
             if self._cancel_flags.get(export_id, False):
                 job.status = "cancelled"
                 log_msg("Export cancelled by user request.")
                 job.completed_at = datetime.now(timezone.utc).isoformat()
                 job.logs = logs
-                self.repository.save_or_update_export_job(job.model_dump())
+                self.repository.save_or_update_export_job(job.model_dump(mode="json"))
                 return
 
             # Determine output filepath
@@ -291,12 +291,13 @@ class GGUFExportService:
             log_msg(f"GGUF conversion verified! File size: {file_size} bytes, SHA256: {sha256}")
 
             job.status = "completed"
+            job.output_path = output_filepath
             job.output_filepath = output_filepath
             job.file_size_bytes = file_size
             job.sha256 = sha256
             job.completed_at = datetime.now(timezone.utc).isoformat()
             job.logs = logs
-            self.repository.save_or_update_export_job(job.model_dump())
+            self.repository.save_or_update_export_job(job.model_dump(mode="json"))
 
         except Exception as e:
             log_msg(f"GGUF export failed: {str(e)}")
@@ -304,7 +305,7 @@ class GGUFExportService:
             job.error_message = str(e)
             job.completed_at = datetime.now(timezone.utc).isoformat()
             job.logs = logs
-            self.repository.save_or_update_export_job(job.model_dump())
+            self.repository.save_or_update_export_job(job.model_dump(mode="json"))
             logger.error(f"GGUF export {export_id} failed: {str(e)}", exc_info=True)
             if not isinstance(e, GGUFExportError):
                 raise

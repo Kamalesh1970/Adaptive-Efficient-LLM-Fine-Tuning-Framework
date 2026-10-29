@@ -291,7 +291,7 @@ class QuantizationService:
             log_msg(f"Starting {config.method.value.upper()} quantization...")
             job.status = QuantizationJobStatus.RUNNING
             job.started_at = datetime.now(timezone.utc).isoformat()
-            self.repository.save_or_update_quantization_job(job.model_dump())
+            self.repository.save_or_update_quantization_job(job.model_dump(mode="json"))
 
             # 1. Check capability availability
             caps = {c.method: c for c in self.get_capabilities()}
@@ -305,7 +305,7 @@ class QuantizationService:
                 log_msg("Job cancelled by user request.")
                 job.completed_at = datetime.now(timezone.utc).isoformat()
                 job.logs = logs
-                self.repository.save_or_update_quantization_job(job.model_dump())
+                self.repository.save_or_update_quantization_job(job.model_dump(mode="json"))
                 return
 
             # 3. Create isolated output directory
@@ -387,7 +387,7 @@ class QuantizationService:
             job.elapsed_seconds = round(time.time() - start_time, 2)
             job.logs = logs
 
-            self.repository.save_or_update_quantization_job(job.model_dump())
+            self.repository.save_or_update_quantization_job(job.model_dump(mode="json"))
 
         except Exception as e:
             log_msg(f"Quantization failed: {str(e)}")
@@ -396,7 +396,7 @@ class QuantizationService:
             job.completed_at = datetime.now(timezone.utc).isoformat()
             job.elapsed_seconds = round(time.time() - start_time, 2)
             job.logs = logs
-            self.repository.save_or_update_quantization_job(job.model_dump())
+            self.repository.save_or_update_quantization_job(job.model_dump(mode="json"))
             logger.error(f"Quantization job {job_id} failed: {str(e)}", exc_info=True)
             if not isinstance(e, (QuantizationCompatibilityError, QuantizationDependencyError)):
                 raise

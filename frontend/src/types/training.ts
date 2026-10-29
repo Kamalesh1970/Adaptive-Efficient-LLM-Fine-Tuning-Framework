@@ -572,4 +572,100 @@ export interface EvaluationResultsResponse {
   error_message?: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 10: Containerization, Kubernetes, Advanced Quantization & Serving Types
+// ---------------------------------------------------------------------------
+
+export interface KubernetesValidationResponse {
+  is_valid: boolean;
+  manifest_count: number;
+  manifests: Array<{ filename: string; kind: string; name: string }>;
+  errors: string[];
+}
+
+export interface QuantizationCapability {
+  method: 'bnb_4bit' | 'bnb_8bit' | 'gptq' | 'awq' | 'gguf';
+  name: string;
+  is_available: boolean;
+  required_libraries: string[];
+  installed_libraries: string[];
+  missing_libraries: string[];
+  requires_cuda: boolean;
+  cuda_available: boolean;
+  supports_training: boolean;
+  supports_post_training: boolean;
+  supports_inference: boolean;
+  supports_export: boolean;
+  reason_if_unavailable?: string | null;
+}
+
+export interface QuantizationJobRecord {
+  job_id: string;
+  method: string;
+  source_reference: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  config: Record<string, unknown>;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  elapsed_seconds: number;
+  output_artifact_path?: string | null;
+  original_size_bytes?: number | null;
+  quantized_size_bytes?: number | null;
+  size_reduction_ratio?: number | null;
+  sha256?: string | null;
+  logs: string[];
+  error_message?: string | null;
+}
+
+export interface GGUFExportJobRecord {
+  export_id: string;
+  source_artifact_id?: string;
+  source_reference?: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  config: {
+    source_artifact_id: string;
+    base_model_identifier?: string | null;
+    quantization_type: string;
+    output_filename?: string | null;
+  };
+  output_filepath?: string | null;
+  file_size_bytes?: number | null;
+  sha256?: string | null;
+  created_at: string;
+  completed_at?: string | null;
+  logs: string[];
+  error_message?: string | null;
+}
+
+export interface ServingInstanceRecord {
+  instance_id: string;
+  model_reference: string;
+  backend: 'vllm';
+  status: 'validating' | 'starting' | 'ready' | 'stopped' | 'failed';
+  host: string;
+  port: number;
+  config: Record<string, unknown>;
+  pid?: number | null;
+  created_at: string;
+  ready_at?: string | null;
+  stopped_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface MultiGPUSystemReport {
+  gpu_count: number;
+  cuda_available: boolean;
+  devices: Array<{
+    index: number;
+    name: string;
+    total_memory_mb: number;
+    cuda_compute_capability: string;
+  }>;
+  ddp_supported: boolean;
+  fsdp_supported: boolean;
+  recommended_strategy: 'none' | 'ddp' | 'fsdp';
+  summary: string;
+}
+
 
