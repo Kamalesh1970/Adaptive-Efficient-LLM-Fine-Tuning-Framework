@@ -15,6 +15,15 @@ from backend.app.services.dataset_service import (
     get_dataset_service,
 )
 
+from backend.app.services.artifact_service import (
+    ArtifactService,
+    get_artifact_service,
+)
+from backend.app.services.evaluation_service import (
+    EvaluationService,
+    get_evaluation_service,
+)
+
 __all__ = [
     "get_default_training_config",
     "validate_training_config",
@@ -22,6 +31,10 @@ __all__ = [
     "get_model_catalog_service",
     "DatasetService",
     "get_dataset_service",
+    "ArtifactService",
+    "get_artifact_service",
+    "EvaluationService",
+    "get_evaluation_service",
 ]
 
 

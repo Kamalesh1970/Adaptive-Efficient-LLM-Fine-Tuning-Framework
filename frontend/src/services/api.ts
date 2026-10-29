@@ -21,6 +21,14 @@ import {
   TrainingLogListResponse,
   CheckpointListResponse,
   RunHistoryListResponse,
+  ArtifactMetadata,
+  RunArtifactsListResponse,
+  ArtifactValidationResponse,
+  ArtifactExportResponse,
+  EvaluationConfig,
+  EvaluationRun,
+  EvaluationListResponse,
+  EvaluationResultsResponse,
 } from '../types/training';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -193,6 +201,10 @@ export async function fetchRunArtifacts(runId: string): Promise<TrainingArtifact
   return request<TrainingArtifactMetadata>(`/training/runs/${encodeURIComponent(runId)}/artifacts`);
 }
 
+export async function fetchArtifactsForRun(runId: string): Promise<RunArtifactsListResponse> {
+  return request<RunArtifactsListResponse>(`/training/runs/${encodeURIComponent(runId)}/artifacts`);
+}
+
 // ---------------------------------------------------------
 // Phase 6: Pre-Launch Preflight Validation
 // ---------------------------------------------------------
@@ -293,4 +305,77 @@ export async function fetchRunCheckpoints(
     `/training/runs/${encodeURIComponent(runId)}/checkpoints`
   );
 }
+
+// ---------------------------------------------------------
+// Phase 8: Artifacts, Export & Model Evaluation
+// ---------------------------------------------------------
+
+export async function fetchAllArtifacts(runId?: string): Promise<ArtifactMetadata[]> {
+  const query = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
+  return request<ArtifactMetadata[]>(`/artifacts${query}`);
+}
+
+export async function fetchArtifactDetails(artifactId: string): Promise<ArtifactMetadata> {
+  return request<ArtifactMetadata>(`/artifacts/${encodeURIComponent(artifactId)}`);
+}
+
+export async function validateArtifact(
+  artifactId: string,
+  checkLoadable = false
+): Promise<ArtifactValidationResponse> {
+  return request<ArtifactValidationResponse>(`/artifacts/${encodeURIComponent(artifactId)}/validate`, {
+    method: 'POST',
+    body: JSON.stringify({ check_loadable: checkLoadable }),
+  });
+}
+
+export async function exportArtifact(artifactId: string): Promise<ArtifactExportResponse> {
+  return request<ArtifactExportResponse>(`/artifacts/${encodeURIComponent(artifactId)}/export`, {
+    method: 'POST',
+  });
+}
+
+export function getArtifactDownloadUrl(artifactId: string): string {
+  return `${BASE_URL}/artifacts/${encodeURIComponent(artifactId)}/download`;
+}
+
+export async function createEvaluation(config: EvaluationConfig): Promise<EvaluationRun> {
+  return request<EvaluationRun>('/evaluations', {
+    method: 'POST',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function fetchEvaluations(params?: {
+  run_id?: string;
+  artifact_id?: string;
+  status?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<EvaluationListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.run_id) searchParams.append('run_id', params.run_id);
+  if (params?.artifact_id) searchParams.append('artifact_id', params.artifact_id);
+  if (params?.status) searchParams.append('status', params.status);
+  if (params?.page) searchParams.append('page', params.page.toString());
+  if (params?.page_size) searchParams.append('page_size', params.page_size.toString());
+
+  const queryStr = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  return request<EvaluationListResponse>(`/evaluations${queryStr}`);
+}
+
+export async function fetchEvaluationDetails(evaluationId: string): Promise<EvaluationRun> {
+  return request<EvaluationRun>(`/evaluations/${encodeURIComponent(evaluationId)}`);
+}
+
+export async function cancelEvaluation(evaluationId: string): Promise<EvaluationRun> {
+  return request<EvaluationRun>(`/evaluations/${encodeURIComponent(evaluationId)}/cancel`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchEvaluationResults(evaluationId: string): Promise<EvaluationResultsResponse> {
+  return request<EvaluationResultsResponse>(`/evaluations/${encodeURIComponent(evaluationId)}/results`);
+}
+
 

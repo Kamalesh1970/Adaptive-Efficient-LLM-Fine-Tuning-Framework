@@ -554,7 +554,19 @@ def test_api_launch_qlora_run(client: TestClient, tmp_path):
         }
     }
 
-    res = client.post("/api/training/runs", json=payload)
+    mock_hw = {
+        "pytorch_available": True,
+        "cuda_available": True,
+        "gpu_available": True,
+        "gpu_count": 1,
+        "device_type": "cuda",
+        "primary_gpu_name": "Test GPU",
+        "primary_gpu_vram_gb": 16.0,
+        "environment_type": "cuda_accelerated",
+        "detection_status": "gpu_detected",
+    }
+    with patch("backend.app.services.preflight_service.get_system_hardware_info", return_value=mock_hw):
+        res = client.post("/api/training/runs", json=payload)
     assert res.status_code == 201
     data = res.json()
     assert data["status"] in ("queued", "validating", "loading_model", "completed")

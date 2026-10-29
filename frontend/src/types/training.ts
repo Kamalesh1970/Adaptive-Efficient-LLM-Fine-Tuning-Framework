@@ -400,3 +400,176 @@ export interface RunHistoryListResponse {
   total_pages: number;
 }
 
+// ─── Phase 8: Artifacts, Export, & Evaluation Types ─────────────────────────
+
+export type ArtifactType =
+  | 'lora_adapter'
+  | 'qlora_adapter'
+  | 'full_model'
+  | 'checkpoint'
+  | 'tokenizer'
+  | 'config_snapshot';
+
+export type ValidationStatus = 'unvalidated' | 'valid' | 'invalid' | 'corrupted';
+
+export type ExportStatus = 'not_exported' | 'exporting' | 'exported' | 'export_failed';
+
+export interface ArtifactFileEntry {
+  filename: string;
+  size_bytes: number;
+  sha256?: string | null;
+  is_required: boolean;
+  exists: boolean;
+}
+
+export interface ArtifactMetadata {
+  artifact_id: string;
+  run_id: string;
+  artifact_type: ArtifactType;
+  model_identifier: string;
+  fine_tuning_method: string;
+  created_at: string;
+  file_reference: string;
+  size_bytes: number;
+  adapter_config?: Record<string, any> | null;
+  quantization_config?: Record<string, any> | null;
+  checkpoint_step?: number | null;
+  validation_status: ValidationStatus;
+  export_status: ExportStatus;
+  exported_package_path?: string | null;
+  files?: ArtifactFileEntry[];
+  validation_errors?: string[];
+  validation_warnings?: string[];
+  base_model_identifier?: string | null;
+  is_loadable?: boolean | null;
+  load_error?: string | null;
+}
+
+export interface RunArtifactsListResponse {
+  run_id: string;
+  artifacts: ArtifactMetadata[];
+  total: number;
+  artifact_directory?: string | null;
+  files?: string[] | null;
+  adapter_config?: Record<string, any> | null;
+  quantization_config?: Record<string, any> | null;
+  trainable_params?: number | null;
+  total_params?: number | null;
+  trainable_percent?: number | null;
+  is_valid?: boolean | null;
+  verification_status?: string | null;
+}
+
+export interface ArtifactValidationResponse {
+  artifact_id: string;
+  is_valid: boolean;
+  validation_status: ValidationStatus;
+  errors: string[];
+  warnings: string[];
+  checksums: Record<string, string>;
+  total_size_bytes: number;
+  is_loadable?: boolean | null;
+  load_error?: string | null;
+  checked_at: string;
+}
+
+export interface ArtifactExportResponse {
+  artifact_id: string;
+  export_status: ExportStatus;
+  package_filename: string;
+  package_size_bytes: number;
+  sha256: string;
+  created_at: string;
+  download_url: string;
+  message: string;
+}
+
+export type EvaluationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+
+export interface EvaluationConfig {
+  artifact_id: string;
+  dataset_id: string;
+  split?: string;
+  max_samples?: number;
+  batch_size?: number;
+  context_length?: number;
+  temperature?: number;
+  max_new_tokens?: number;
+  do_sample?: boolean;
+  seed?: number;
+  run_baseline_comparison?: boolean;
+  generate_samples?: boolean;
+  num_samples_to_save?: number;
+}
+
+export interface EvaluationMetrics {
+  eval_loss?: number | null;
+  perplexity?: number | null;
+  perplexity_overflow?: boolean;
+  total_tokens: number;
+  eval_samples_count: number;
+  eval_runtime_seconds: number;
+  samples_per_second: number;
+  tokens_per_second: number;
+  unavailable_reasons: Record<string, string>;
+}
+
+export interface EvaluationSample {
+  sample_id: number;
+  prompt: string;
+  expected_output?: string | null;
+  fine_tuned_output?: string | null;
+  base_output?: string | null;
+  generation_time_ms: number;
+}
+
+export interface BaselineComparison {
+  base_model_identifier: string;
+  base_eval_loss?: number | null;
+  base_perplexity?: number | null;
+  fine_tuned_eval_loss?: number | null;
+  fine_tuned_perplexity?: number | null;
+  loss_delta?: number | null;
+  perplexity_delta?: number | null;
+  is_improvement?: boolean | null;
+  base_tokens_per_second?: number | null;
+  fine_tuned_tokens_per_second?: number | null;
+  comparison_summary: string;
+  is_comparable: boolean;
+  incomparable_reason?: string | null;
+}
+
+export interface EvaluationRun {
+  evaluation_id: string;
+  run_id: string;
+  artifact_id: string;
+  dataset_id: string;
+  status: EvaluationStatus;
+  config: EvaluationConfig;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  elapsed_seconds: number;
+  metrics?: EvaluationMetrics | null;
+  samples: EvaluationSample[];
+  baseline_comparison?: BaselineComparison | null;
+  error_message?: string | null;
+}
+
+export interface EvaluationListResponse {
+  evaluations: EvaluationRun[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface EvaluationResultsResponse {
+  evaluation_id: string;
+  status: EvaluationStatus;
+  metrics?: EvaluationMetrics | null;
+  samples: EvaluationSample[];
+  baseline_comparison?: BaselineComparison | null;
+  error_message?: string | null;
+}
+
+

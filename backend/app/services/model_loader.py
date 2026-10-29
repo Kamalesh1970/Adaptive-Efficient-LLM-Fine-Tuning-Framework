@@ -76,6 +76,19 @@ def is_test_model(model_identifier: Optional[str]) -> bool:
     return model_identifier in _test_model_registry
 
 
+def is_test_model_registered(model_identifier: Optional[str]) -> bool:
+    """Alias for is_test_model."""
+    return is_test_model(model_identifier)
+
+
+def get_test_model(model_identifier: str) -> Tuple[Any, Any]:
+    """Instantiates and returns (model, tokenizer) from test registry."""
+    if model_identifier not in _test_model_registry:
+        raise KeyError(f"No synthetic test model registered for '{model_identifier}'")
+    m_fn, t_fn = _test_model_registry[model_identifier]
+    return m_fn(), t_fn()
+
+
 def resolve_execution_device(requested: Optional[str] = None) -> str:
     """
     Resolves execution device. Returns 'cuda:0' or 'cuda' only if CUDA hardware is available.

@@ -63,7 +63,7 @@ Thumbs.db
 # Project Outputs, Models & Datasets
 outputs/
 checkpoints/
-artifacts/
+/artifacts/
 models/*
 !models/.gitkeep
 datasets/*

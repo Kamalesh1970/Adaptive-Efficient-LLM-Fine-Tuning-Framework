@@ -50,6 +50,10 @@ class AppSettings(BaseModel):
         default="artifacts/runs",
         description="Directory to store training run artifacts"
     )
+    exports_output_dir: str = Field(
+        default="artifacts/exports",
+        description="Directory to store exported adapter packages"
+    )
     allow_remote_code: bool = Field(
         default=False,
         description="Whether to permit execution of remote custom model code (strictly False by default)"

@@ -1,13 +1,15 @@
 import React from 'react';
-import { Sliders, Activity, Clock, LucideIcon } from 'lucide-react';
+import { Sliders, Activity, Clock, Box, BarChart2, LucideIcon } from 'lucide-react';
+
+export type StudioTab = 'configure' | 'current-run' | 'history' | 'artifacts' | 'evaluation';
 
 interface HeaderProps {
-  activeTab: 'configure' | 'current-run' | 'history';
-  onTabChange: (tab: 'configure' | 'current-run' | 'history') => void;
+  activeTab: StudioTab;
+  onTabChange: (tab: StudioTab) => void;
 }
 
 interface TabItem {
-  id: 'configure' | 'current-run' | 'history';
+  id: StudioTab;
   label: string;
   icon: LucideIcon;
   badge?: string;
@@ -16,8 +18,10 @@ interface TabItem {
 export const Header: React.FC<HeaderProps> = ({ activeTab, onTabChange }) => {
   const tabs: TabItem[] = [
     { id: 'configure', label: 'Configure', icon: Sliders },
-    { id: 'current-run', label: 'Current Run', icon: Activity, badge: 'Phase 4' },
+    { id: 'current-run', label: 'Current Run', icon: Activity, badge: 'Monitor' },
     { id: 'history', label: 'History', icon: Clock },
+    { id: 'artifacts', label: 'Artifacts', icon: Box },
+    { id: 'evaluation', label: 'Evaluation', icon: BarChart2 },
   ];
 
   return (

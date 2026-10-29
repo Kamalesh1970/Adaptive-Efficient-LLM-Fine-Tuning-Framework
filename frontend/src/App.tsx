@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/layout/Sidebar';
-import { Header } from './components/layout/Header';
+import { Header, StudioTab } from './components/layout/Header';
 import { TrainingPage } from './features/training/TrainingPage';
 import { CurrentRunView } from './features/training/CurrentRunView';
+import { ArtifactsView } from './features/artifacts/ArtifactsView';
+import { EvaluationView } from './features/evaluation/EvaluationView';
 import { PrivacyPolicy } from './pages/PrivacyPolicy';
 import { TermsConditions } from './pages/TermsConditions';
 import { SystemStatus, HealthStatus } from './types/training';
@@ -11,8 +13,9 @@ import { TrainingHistoryView } from './features/training/TrainingHistoryView';
 
 export const App: React.FC = () => {
   const [activeNav, setActiveNav] = useState('new-training');
-  const [activeTab, setActiveTab] = useState<'configure' | 'current-run' | 'history'>('configure');
+  const [activeTab, setActiveTab] = useState<StudioTab>('configure');
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const [evaluationArtifactId, setEvaluationArtifactId] = useState<string | null>(null);
   const [modalView, setModalView] = useState<'privacy' | 'terms' | null>(null);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [, setHealth] = useState<HealthStatus | null>(null);
@@ -38,6 +41,33 @@ export const App: React.FC = () => {
     return () => clearInterval(interval);
   }, [checkBackendStatus]);
 
+  const handleSelectNav = (nav: string) => {
+    setModalView(null);
+    setActiveNav(nav);
+    if (nav === 'new-training') {
+      setActiveTab('configure');
+    } else if (nav === 'artifacts' || nav === 'models') {
+      setActiveTab('artifacts');
+    } else if (nav === 'evaluation') {
+      setActiveTab('evaluation');
+    } else if (nav === 'history') {
+      setActiveTab('history');
+    }
+  };
+
+  const handleTabChange = (tab: StudioTab) => {
+    setActiveTab(tab);
+    if (tab === 'configure') {
+      setActiveNav('new-training');
+    } else if (tab === 'artifacts') {
+      setActiveNav('artifacts');
+    } else if (tab === 'evaluation') {
+      setActiveNav('evaluation');
+    } else if (tab === 'history') {
+      setActiveNav('history');
+    }
+  };
+
   return (
     <div className="flex h-screen bg-studio-bg text-studio-text overflow-hidden font-sans">
       {/* Left Sidebar */}
@@ -45,10 +75,7 @@ export const App: React.FC = () => {
         systemStatus={systemStatus}
         backendOnline={backendOnline}
         activeNav={activeNav}
-        onSelectNav={(nav) => {
-          setModalView(null);
-          setActiveNav(nav);
-        }}
+        onSelectNav={handleSelectNav}
         onOpenPrivacy={() => setModalView('privacy')}
         onOpenTerms={() => setModalView('terms')}
       />
@@ -63,7 +90,7 @@ export const App: React.FC = () => {
           )
         ) : (
           <>
-            <Header activeTab={activeTab} onTabChange={setActiveTab} />
+            <Header activeTab={activeTab} onTabChange={handleTabChange} />
 
             {/* Tab Views */}
             {activeTab === 'configure' && (
@@ -82,6 +109,14 @@ export const App: React.FC = () => {
               <CurrentRunView
                 activeRunId={currentRunId}
                 onNavigateToConfigure={() => setActiveTab('configure')}
+                onNavigateToArtifacts={() => {
+                  setActiveTab('artifacts');
+                  setActiveNav('artifacts');
+                }}
+                onNavigateToEvaluation={() => {
+                  setActiveTab('evaluation');
+                  setActiveNav('evaluation');
+                }}
               />
             )}
 
@@ -90,6 +125,27 @@ export const App: React.FC = () => {
                 onSelectRun={(runId) => {
                   setCurrentRunId(runId);
                   setActiveTab('current-run');
+                }}
+              />
+            )}
+
+            {activeTab === 'artifacts' && (
+              <ArtifactsView
+                initialRunId={currentRunId}
+                onNavigateToEvaluation={(artId) => {
+                  setEvaluationArtifactId(artId);
+                  setActiveTab('evaluation');
+                  setActiveNav('evaluation');
+                }}
+              />
+            )}
+
+            {activeTab === 'evaluation' && (
+              <EvaluationView
+                initialArtifactId={evaluationArtifactId}
+                onNavigateToArtifacts={() => {
+                  setActiveTab('artifacts');
+                  setActiveNav('artifacts');
                 }}
               />
             )}

@@ -16,6 +16,8 @@ import {
   ScrollText,
   HardDrive,
   Gauge,
+  Box,
+  BarChart2,
 } from 'lucide-react';
 import { Badge } from '../../components/common/Badge';
 import {
@@ -37,6 +39,8 @@ import {
 interface CurrentRunViewProps {
   activeRunId: string | null;
   onNavigateToConfigure?: () => void;
+  onNavigateToArtifacts?: () => void;
+  onNavigateToEvaluation?: (runId?: string) => void;
 }
 
 type ActiveMonitorTab = 'telemetry' | 'events' | 'logs' | 'checkpoints';
@@ -44,6 +48,8 @@ type ActiveMonitorTab = 'telemetry' | 'events' | 'logs' | 'checkpoints';
 export const CurrentRunView: React.FC<CurrentRunViewProps> = ({
   activeRunId,
   onNavigateToConfigure,
+  onNavigateToArtifacts,
+  onNavigateToEvaluation,
 }) => {
   const [run, setRun] = useState<TrainingRunResponse | null>(null);
   const [artifacts, setArtifacts] = useState<TrainingArtifactMetadata | null>(null);
@@ -798,6 +804,29 @@ export const CurrentRunView: React.FC<CurrentRunViewProps> = ({
                 ))}
               </ul>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-emerald-500/20">
+            {onNavigateToArtifacts && (
+              <button
+                type="button"
+                onClick={onNavigateToArtifacts}
+                className="px-3.5 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                data-testid="btn-view-run-artifacts"
+              >
+                <Box className="w-3.5 h-3.5" /> Open in Artifact Registry
+              </button>
+            )}
+            {onNavigateToEvaluation && (
+              <button
+                type="button"
+                onClick={() => onNavigateToEvaluation(run?.run_id)}
+                className="px-3.5 py-1.5 bg-studio-card hover:bg-studio-cardHover text-studio-text border border-studio-border rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                data-testid="btn-eval-run-artifacts"
+              >
+                <BarChart2 className="w-3.5 h-3.5 text-studio-accent" /> Evaluate This Adapter
+              </button>
+            )}
           </div>
         </div>
       )}

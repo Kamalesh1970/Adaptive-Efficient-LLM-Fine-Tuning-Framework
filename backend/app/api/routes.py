@@ -2,12 +2,14 @@
 API Route Handlers for Adaptive LLM Fine-Tuning Studio (Phase 0–6).
 """
 
-from typing import Dict, Any, Optional
+import os
+from typing import Dict, Any, Optional, List
 import json
 import math
 from email.parser import BytesParser
 from email import policy
 from fastapi import APIRouter, HTTPException, status, Request, Query
+from fastapi.responses import FileResponse
 
 from backend.app.core.config import settings
 from backend.app.core.system import get_system_hardware_info
@@ -31,8 +33,23 @@ from backend.app.schemas.history import (
     RunHistoryItem,
     RunHistoryListResponse,
 )
+from backend.app.schemas.artifacts import (
+    ArtifactMetadata,
+    ArtifactValidationRequest,
+    ArtifactValidationResponse,
+    ArtifactExportResponse,
+    RunArtifactsListResponse,
+)
+from backend.app.schemas.evaluation import (
+    EvaluationRun,
+    EvaluationConfig,
+    EvaluationListResponse,
+    EvaluationResultsResponse,
+)
 from backend.app.services.job_manager import get_job_manager
 from backend.app.services.run_repository import get_run_repository
+from backend.app.services.artifact_service import get_artifact_service, ArtifactSecurityError
+from backend.app.services.evaluation_service import get_evaluation_service
 from backend.app.schemas.models import (
     ModelMetadata,
     ModelCatalogResponse,
@@ -773,32 +790,279 @@ def cancel_training_run(run_id: str) -> TrainingRunResponse:
 
 @router.get(
     "/training/runs/{run_id}/artifacts",
-    response_model=TrainingArtifactMetadata,
-    summary="Get Validated Training Artifact Metadata",
+    response_model=RunArtifactsListResponse,
+    summary="List Artifacts for a Training Run",
 )
-def get_run_artifacts(run_id: str) -> TrainingArtifactMetadata:
-    """Retrieves validated metadata for saved LoRA adapters and run artifacts."""
+def get_run_artifacts(run_id: str) -> RunArtifactsListResponse:
+    """
+    Lists artifacts that actually exist for the requested run.
+    Maintains backward compatibility with earlier Phase 4/7 clients.
+    """
+    art_svc = get_artifact_service()
+    try:
+        run_dir = art_svc._resolve_safe_run_dir(run_id)
+    except ArtifactSecurityError as se:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(se),
+        )
+
     job_mgr = get_job_manager()
+    run_repo = get_run_repository()
     job = job_mgr.get_job(run_id)
-    if not job:
+    db_run = run_repo.get_run(run_id)
+
+    if not job and not db_run and not os.path.isdir(run_dir):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Training run '{run_id}' not found.",
         )
 
-    if job.status != TrainingRunStatus.COMPLETED:
+    if job and job.status not in (TrainingRunStatus.COMPLETED, TrainingRunStatus.FAILED, TrainingRunStatus.CANCELLED):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Artifacts are not available. Current run status is '{job.status.value}'.",
         )
 
-    meta = job_mgr.get_artifacts_metadata(run_id)
-    if not meta:
+    resp = art_svc.get_run_artifacts_response(run_id)
+    if resp.total == 0 and not os.path.isdir(run_dir):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Artifact metadata could not be verified on disk for run '{run_id}'.",
         )
 
-    return meta
+    return resp
+
+
+@router.get(
+    "/artifacts",
+    response_model=List[ArtifactMetadata],
+    summary="List All Training Artifacts",
+)
+def list_artifacts(run_id: Optional[str] = Query(None, description="Optional run ID filter")) -> List[ArtifactMetadata]:
+    """Lists registered artifacts across all runs or filtered by run ID."""
+    art_svc = get_artifact_service()
+    if run_id:
+        return art_svc.discover_artifacts_for_run(run_id)
+    return art_svc.list_all_artifacts()
+
+
+@router.get(
+    "/artifacts/{artifact_id}",
+    response_model=ArtifactMetadata,
+    summary="Get Artifact Metadata",
+)
+def get_artifact(artifact_id: str) -> ArtifactMetadata:
+    """Returns safe metadata for a known artifact."""
+    art_svc = get_artifact_service()
+    art = art_svc.get_artifact(artifact_id)
+    if not art:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Artifact '{artifact_id}' not found.",
+        )
+    return art
+
+
+@router.post(
+    "/artifacts/{artifact_id}/validate",
+    response_model=ArtifactValidationResponse,
+    summary="Validate Artifact Integrity",
+)
+def validate_artifact(
+    artifact_id: str,
+    payload: Optional[ArtifactValidationRequest] = None,
+) -> ArtifactValidationResponse:
+    """Validates artifact integrity and reports precise failures."""
+    art_svc = get_artifact_service()
+    check_loadable = payload.check_loadable if payload else False
+    try:
+        return art_svc.validate_artifact(artifact_id, check_loadable=check_loadable)
+    except ArtifactSecurityError as se:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(se),
+        )
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(ve),
+        )
+
+
+@router.post(
+    "/artifacts/{artifact_id}/export",
+    response_model=ArtifactExportResponse,
+    summary="Export LoRA or QLoRA Adapter Package",
+)
+def export_artifact(artifact_id: str) -> ArtifactExportResponse:
+    """Creates a clean, safe export package from a validated adapter artifact."""
+    art_svc = get_artifact_service()
+    try:
+        return art_svc.export_adapter(artifact_id)
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve),
+        )
+    except ArtifactSecurityError as se:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(se),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Export failed: {str(e)}",
+        )
+
+
+@router.get(
+    "/artifacts/{artifact_id}/download",
+    summary="Download Exported Adapter Package",
+)
+def download_artifact(artifact_id: str):
+    """Downloads the export package using a safe, controlled response."""
+    art_svc = get_artifact_service()
+    try:
+        filepath, filename = art_svc.get_export_download_path(artifact_id)
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(ve),
+        )
+    except FileNotFoundError as fe:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(fe),
+        )
+    except ArtifactSecurityError as se:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(se),
+        )
+
+    return FileResponse(
+        path=filepath,
+        filename=filename,
+        media_type="application/zip",
+    )
+
+
+# -------------------------------------------------------------
+# Phase 8: Model Evaluation Endpoints
+# -------------------------------------------------------------
+
+@router.post(
+    "/evaluations",
+    response_model=EvaluationRun,
+    status_code=status.HTTP_201_CREATED,
+    summary="Start Model Evaluation Job",
+)
+def create_evaluation(payload: EvaluationConfig) -> EvaluationRun:
+    """Initiates an evaluation run on an artifact and validation dataset."""
+    eval_svc = get_evaluation_service()
+    try:
+        run = eval_svc.create_evaluation(payload)
+        return eval_svc.start_evaluation(run.evaluation_id, background=True)
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(ve),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start evaluation: {str(e)}",
+        )
+
+
+@router.get(
+    "/evaluations",
+    response_model=EvaluationListResponse,
+    summary="List Model Evaluations",
+)
+def list_evaluations(
+    run_id: Optional[str] = Query(None, description="Optional training run ID filter"),
+    artifact_id: Optional[str] = Query(None, description="Optional artifact ID filter"),
+    status: Optional[str] = Query(None, description="Optional status filter"),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Page size"),
+) -> EvaluationListResponse:
+    """Lists evaluations with optional filters and pagination."""
+    run_repo = get_run_repository()
+    items, total = run_repo.list_evaluations(
+        run_id=run_id,
+        artifact_id=artifact_id,
+        status_filter=status,
+        page=page,
+        page_size=page_size,
+    )
+    return EvaluationListResponse(
+        evaluations=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/evaluations/{evaluation_id}",
+    response_model=EvaluationRun,
+    summary="Get Evaluation Status and Details",
+)
+def get_evaluation(evaluation_id: str) -> EvaluationRun:
+    """Retrieves evaluation status, configuration, and progress."""
+    run_repo = get_run_repository()
+    evaluation = run_repo.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Evaluation '{evaluation_id}' not found.",
+        )
+    return evaluation
+
+
+@router.post(
+    "/evaluations/{evaluation_id}/cancel",
+    response_model=EvaluationRun,
+    summary="Cancel Ongoing Evaluation Job",
+)
+def cancel_evaluation(evaluation_id: str) -> EvaluationRun:
+    """Cancels an active evaluation job safely."""
+    eval_svc = get_evaluation_service()
+    try:
+        return eval_svc.cancel_evaluation(evaluation_id)
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(ve),
+        )
+
+
+@router.get(
+    "/evaluations/{evaluation_id}/results",
+    response_model=EvaluationResultsResponse,
+    summary="Get Model Evaluation Results and Baseline Comparison",
+)
+def get_evaluation_results(evaluation_id: str) -> EvaluationResultsResponse:
+    """Retrieves evaluation metrics, sample outputs, and baseline comparison."""
+    run_repo = get_run_repository()
+    evaluation = run_repo.get_evaluation(evaluation_id)
+    if not evaluation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Evaluation '{evaluation_id}' not found.",
+        )
+
+    return EvaluationResultsResponse(
+        evaluation_id=evaluation.evaluation_id,
+        status=evaluation.status,
+        metrics=evaluation.metrics,
+        samples=evaluation.samples,
+        baseline_comparison=evaluation.baseline_comparison,
+        error_message=evaluation.error_message,
+    )
+
 
 

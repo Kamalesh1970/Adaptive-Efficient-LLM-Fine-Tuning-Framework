@@ -19,6 +19,21 @@ from backend.app.schemas.history import (
     TrainingLogEntry,
     RunHistoryItem,
 )
+from backend.app.schemas.artifacts import (
+    ArtifactMetadata,
+    ArtifactFileEntry,
+    ArtifactType,
+    ValidationStatus,
+    ExportStatus,
+)
+from backend.app.schemas.evaluation import (
+    EvaluationRun,
+    EvaluationStatus,
+    EvaluationConfig,
+    EvaluationMetrics,
+    EvaluationSample,
+    BaselineComparison,
+)
 
 
 import re
@@ -141,6 +156,55 @@ class RunRepository:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_logs_run_id ON training_logs (run_id, log_id);
+
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    artifact_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    artifact_type TEXT NOT NULL,
+                    model_identifier TEXT NOT NULL,
+                    fine_tuning_method TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    file_reference TEXT NOT NULL,
+                    size_bytes INTEGER DEFAULT 0,
+                    adapter_config_json TEXT,
+                    quantization_config_json TEXT,
+                    checkpoint_step INTEGER,
+                    validation_status TEXT NOT NULL,
+                    export_status TEXT NOT NULL,
+                    exported_package_path TEXT,
+                    files_json TEXT NOT NULL,
+                    validation_errors_json TEXT,
+                    validation_warnings_json TEXT,
+                    base_model_identifier TEXT,
+                    is_loadable INTEGER,
+                    load_error TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_artifacts_run_id ON artifacts (run_id);
+                CREATE INDEX IF NOT EXISTS idx_artifacts_type ON artifacts (artifact_type);
+
+                CREATE TABLE IF NOT EXISTS evaluations (
+                    evaluation_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    artifact_id TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    elapsed_seconds REAL DEFAULT 0.0,
+                    metrics_json TEXT,
+                    samples_json TEXT,
+                    baseline_comparison_json TEXT,
+                    error_message TEXT,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_evaluations_run_id ON evaluations (run_id);
+                CREATE INDEX IF NOT EXISTS idx_evaluations_artifact_id ON evaluations (artifact_id);
+                CREATE INDEX IF NOT EXISTS idx_evaluations_status ON evaluations (status);
             """)
 
     def save_or_update_run(self, run_data: Dict[str, Any]) -> None:
@@ -444,6 +508,239 @@ class RunRepository:
                 for r in rows
             ]
             return logs, total
+
+    # -------------------------------------------------------------
+    # Phase 8: Artifacts Operations
+    # -------------------------------------------------------------
+
+    def save_or_update_artifact(self, artifact: ArtifactMetadata) -> None:
+        """Saves or updates an artifact record in the database."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO artifacts (
+                    artifact_id, run_id, artifact_type, model_identifier,
+                    fine_tuning_method, created_at, file_reference, size_bytes,
+                    adapter_config_json, quantization_config_json, checkpoint_step,
+                    validation_status, export_status, exported_package_path,
+                    files_json, validation_errors_json, validation_warnings_json,
+                    base_model_identifier, is_loadable, load_error, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(artifact_id) DO UPDATE SET
+                    validation_status = excluded.validation_status,
+                    export_status = excluded.export_status,
+                    exported_package_path = excluded.exported_package_path,
+                    size_bytes = excluded.size_bytes,
+                    files_json = excluded.files_json,
+                    validation_errors_json = excluded.validation_errors_json,
+                    validation_warnings_json = excluded.validation_warnings_json,
+                    is_loadable = excluded.is_loadable,
+                    load_error = excluded.load_error,
+                    updated_at = excluded.updated_at
+            """, (
+                artifact.artifact_id,
+                artifact.run_id,
+                artifact.artifact_type.value,
+                artifact.model_identifier,
+                artifact.fine_tuning_method,
+                artifact.created_at,
+                artifact.file_reference,
+                artifact.size_bytes,
+                json.dumps(artifact.adapter_config) if artifact.adapter_config else None,
+                json.dumps(artifact.quantization_config) if artifact.quantization_config else None,
+                artifact.checkpoint_step,
+                artifact.validation_status.value,
+                artifact.export_status.value,
+                artifact.exported_package_path,
+                json.dumps([f.model_dump() for f in artifact.files]),
+                json.dumps(artifact.validation_errors),
+                json.dumps(artifact.validation_warnings),
+                artifact.base_model_identifier,
+                1 if artifact.is_loadable is True else (0 if artifact.is_loadable is False else None),
+                artifact.load_error,
+                now,
+            ))
+
+    def _row_to_artifact(self, row: sqlite3.Row) -> ArtifactMetadata:
+        files_raw = json.loads(row["files_json"]) if row["files_json"] else []
+        files = [ArtifactFileEntry(**f) for f in files_raw]
+
+        is_loadable = None
+        if row["is_loadable"] is not None:
+            is_loadable = bool(row["is_loadable"])
+
+        return ArtifactMetadata(
+            artifact_id=row["artifact_id"],
+            run_id=row["run_id"],
+            artifact_type=ArtifactType(row["artifact_type"]),
+            model_identifier=row["model_identifier"],
+            fine_tuning_method=row["fine_tuning_method"],
+            created_at=row["created_at"],
+            file_reference=row["file_reference"],
+            size_bytes=row["size_bytes"] or 0,
+            adapter_config=json.loads(row["adapter_config_json"]) if row["adapter_config_json"] else None,
+            quantization_config=json.loads(row["quantization_config_json"]) if row["quantization_config_json"] else None,
+            checkpoint_step=row["checkpoint_step"],
+            validation_status=ValidationStatus(row["validation_status"]),
+            export_status=ExportStatus(row["export_status"]),
+            exported_package_path=row["exported_package_path"],
+            files=files,
+            validation_errors=json.loads(row["validation_errors_json"]) if row["validation_errors_json"] else [],
+            validation_warnings=json.loads(row["validation_warnings_json"]) if row["validation_warnings_json"] else [],
+            base_model_identifier=row["base_model_identifier"],
+            is_loadable=is_loadable,
+            load_error=row["load_error"],
+        )
+
+    def get_artifact(self, artifact_id: str) -> Optional[ArtifactMetadata]:
+        """Retrieves artifact metadata by ID."""
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM artifacts WHERE artifact_id = ?",
+                (artifact_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return self._row_to_artifact(row)
+
+    def list_artifacts(self, run_id: Optional[str] = None) -> List[ArtifactMetadata]:
+        """Lists artifacts, optionally filtered by run ID."""
+        with self._lock, self._get_connection() as conn:
+            if run_id:
+                rows = conn.execute(
+                    "SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC",
+                    (run_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM artifacts ORDER BY created_at DESC"
+                ).fetchall()
+            return [self._row_to_artifact(r) for r in rows]
+
+    # -------------------------------------------------------------
+    # Phase 8: Evaluations Operations
+    # -------------------------------------------------------------
+
+    def save_or_update_evaluation(self, evaluation: EvaluationRun) -> None:
+        """Saves or updates an evaluation run in the database."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock, self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO evaluations (
+                    evaluation_id, run_id, artifact_id, dataset_id, status,
+                    config_json, created_at, started_at, completed_at,
+                    elapsed_seconds, metrics_json, samples_json,
+                    baseline_comparison_json, error_message, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(evaluation_id) DO UPDATE SET
+                    status = excluded.status,
+                    started_at = excluded.started_at,
+                    completed_at = excluded.completed_at,
+                    elapsed_seconds = excluded.elapsed_seconds,
+                    metrics_json = excluded.metrics_json,
+                    samples_json = excluded.samples_json,
+                    baseline_comparison_json = excluded.baseline_comparison_json,
+                    error_message = excluded.error_message,
+                    updated_at = excluded.updated_at
+            """, (
+                evaluation.evaluation_id,
+                evaluation.run_id,
+                evaluation.artifact_id,
+                evaluation.dataset_id,
+                evaluation.status.value,
+                json.dumps(evaluation.config.model_dump()),
+                evaluation.created_at,
+                evaluation.started_at,
+                evaluation.completed_at,
+                evaluation.elapsed_seconds,
+                json.dumps(evaluation.metrics.model_dump()) if evaluation.metrics else None,
+                json.dumps([s.model_dump() for s in evaluation.samples]),
+                json.dumps(evaluation.baseline_comparison.model_dump()) if evaluation.baseline_comparison else None,
+                _sanitize_string(evaluation.error_message),
+                now,
+            ))
+
+    def _row_to_evaluation(self, row: sqlite3.Row) -> EvaluationRun:
+        config_dict = json.loads(row["config_json"]) if row["config_json"] else {}
+        metrics_dict = json.loads(row["metrics_json"]) if row["metrics_json"] else None
+        samples_raw = json.loads(row["samples_json"]) if row["samples_json"] else []
+        baseline_dict = json.loads(row["baseline_comparison_json"]) if row["baseline_comparison_json"] else None
+
+        return EvaluationRun(
+            evaluation_id=row["evaluation_id"],
+            run_id=row["run_id"],
+            artifact_id=row["artifact_id"],
+            dataset_id=row["dataset_id"],
+            status=EvaluationStatus(row["status"]),
+            config=EvaluationConfig(**config_dict),
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            elapsed_seconds=row["elapsed_seconds"] or 0.0,
+            metrics=EvaluationMetrics(**metrics_dict) if metrics_dict else None,
+            samples=[EvaluationSample(**s) for s in samples_raw],
+            baseline_comparison=BaselineComparison(**baseline_dict) if baseline_dict else None,
+            error_message=row["error_message"],
+        )
+
+    def get_evaluation(self, evaluation_id: str) -> Optional[EvaluationRun]:
+        """Retrieves evaluation run by ID."""
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM evaluations WHERE evaluation_id = ?",
+                (evaluation_id,),
+            ).fetchone()
+            if not row:
+                return None
+            return self._row_to_evaluation(row)
+
+    def list_evaluations(
+        self,
+        run_id: Optional[str] = None,
+        artifact_id: Optional[str] = None,
+        status_filter: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> Tuple[List[EvaluationRun], int]:
+        """Lists evaluations with optional filtering and pagination."""
+        page = max(1, page)
+        page_size = max(1, min(100, page_size))
+        offset = (page - 1) * page_size
+
+        where_clauses = []
+        params: List[Any] = []
+
+        if run_id:
+            where_clauses.append("run_id = ?")
+            params.append(run_id)
+        if artifact_id:
+            where_clauses.append("artifact_id = ?")
+            params.append(artifact_id)
+        if status_filter:
+            where_clauses.append("status = ?")
+            params.append(status_filter.lower())
+
+        where_str = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        with self._lock, self._get_connection() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM evaluations {where_str}",
+                params,
+            ).fetchone()[0]
+
+            rows = conn.execute(
+                f"""
+                SELECT * FROM evaluations
+                {where_str}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                params + [page_size, offset],
+            ).fetchall()
+
+            evaluations = [self._row_to_evaluation(r) for r in rows]
+            return evaluations, total
+
 
 
 _run_repository: Optional[RunRepository] = None

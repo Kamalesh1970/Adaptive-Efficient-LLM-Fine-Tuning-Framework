@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   PlusCircle, 
   Box, 
+  BarChart2,
   Database, 
   History, 
   Settings, 
@@ -28,11 +29,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenTerms,
 }) => {
   const navItems = [
-    { id: 'new-training', label: 'New Training', icon: PlusCircle, active: true },
-    { id: 'models', label: 'Models', icon: Box, active: false },
-    { id: 'datasets', label: 'Datasets', icon: Database, active: false },
-    { id: 'history', label: 'Training History', icon: History, active: false },
-    { id: 'settings', label: 'Settings', icon: Settings, active: false },
+    { id: 'new-training', label: 'New Training', icon: PlusCircle },
+    { id: 'models', label: 'Models & Artifacts', icon: Box },
+    { id: 'evaluation', label: 'Model Evaluation', icon: BarChart2 },
+    { id: 'datasets', label: 'Datasets', icon: Database },
+    { id: 'history', label: 'Training History', icon: History },
+    { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
   return (
