@@ -243,7 +243,11 @@ class RunRepository:
                     model_identifier = excluded.model_identifier,
                     dataset_reference = excluded.dataset_reference,
                     training_method = excluded.training_method,
-                    status = excluded.status,
+                    status = CASE 
+                        WHEN runs.status IN ('completed', 'failed', 'cancelled') AND excluded.status NOT IN ('completed', 'failed', 'cancelled') 
+                        THEN runs.status 
+                        ELSE excluded.status 
+                    END,
                     config_json = excluded.config_json,
                     started_at = COALESCE(excluded.started_at, runs.started_at),
                     completed_at = COALESCE(excluded.completed_at, runs.completed_at),
@@ -633,7 +637,11 @@ class RunRepository:
                     baseline_comparison_json, error_message, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(evaluation_id) DO UPDATE SET
-                    status = excluded.status,
+                    status = CASE 
+                        WHEN evaluations.status IN ('completed', 'failed', 'cancelled') AND excluded.status NOT IN ('completed', 'failed', 'cancelled') 
+                        THEN evaluations.status 
+                        ELSE excluded.status 
+                    END,
                     started_at = excluded.started_at,
                     completed_at = excluded.completed_at,
                     elapsed_seconds = excluded.elapsed_seconds,

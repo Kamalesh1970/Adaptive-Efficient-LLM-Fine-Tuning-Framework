@@ -796,7 +796,7 @@ export const CurrentRunView: React.FC<CurrentRunViewProps> = ({
             <div className="space-y-1">
               <span className="text-studio-muted text-[11px]">Verified Files:</span>
               <ul className="p-2 bg-black/40 rounded border border-studio-border text-studio-text space-y-0.5 text-[11px]" data-testid="artifact-files-list">
-                {artifacts.files.map((f) => (
+                {(artifacts.files || []).map((f) => (
                   <li key={f} className="flex items-center gap-1.5">
                     <FileCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     <span>{f}</span>

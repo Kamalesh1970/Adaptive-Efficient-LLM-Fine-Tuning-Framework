@@ -182,7 +182,7 @@ class TrainingEngine:
             raise TrainingExecutionError("No trainable parameters found in model for optimization.")
 
         lr = config.learning_rate
-        weight_decay = config.weight_decay or 0.01
+        weight_decay = getattr(config, "weight_decay", 0.01) or 0.01
         optimizer = torch.optim.AdamW(trainable_params, lr=lr, weight_decay=weight_decay)
 
         batch_size = max(1, config.batch_size)
@@ -243,7 +243,7 @@ class TrainingEngine:
                 accumulated_loss += loss.item() * grad_accum
 
             # Gradient clipping if configured
-            max_grad_norm = config.max_grad_norm or 1.0
+            max_grad_norm = getattr(config, "max_grad_norm", 1.0) or 1.0
             if max_grad_norm > 0:
                 torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
 

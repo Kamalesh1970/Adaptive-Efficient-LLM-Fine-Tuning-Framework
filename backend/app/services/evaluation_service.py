@@ -82,6 +82,7 @@ class EvaluationService:
         self,
         artifact_service: Optional[ArtifactService] = None,
         dataset_service: Optional[Any] = None,
+        reconcile_on_init: bool = False,
     ) -> None:
         self.repo = get_run_repository()
         self.artifact_service = artifact_service or get_artifact_service()
@@ -89,7 +90,30 @@ class EvaluationService:
         self.training_ds_service = TrainingDatasetService(self.dataset_service)
         self.model_loader = ModelLoaderService()
         self._cancellation_flags: Dict[str, bool] = {}
-        self._lock = threading.Lock()
+        self._active_threads: Dict[str, threading.Thread] = {}
+        self._lock = threading.RLock()
+        if reconcile_on_init:
+            self.reconcile_interrupted_evaluations()
+
+    def reconcile_interrupted_evaluations(self) -> int:
+        """
+        Marks orphaned evaluations left in QUEUED or RUNNING status as FAILED
+        following a server restart or process termination.
+        """
+        active_states = [EvaluationStatus.QUEUED.value, EvaluationStatus.RUNNING.value]
+        reconciled = 0
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            for st in active_states:
+                items, _ = self.repo.list_evaluations(status_filter=st, page=1, page_size=100)
+                for item in items:
+                    if item.evaluation_id not in self._active_threads or not self._active_threads[item.evaluation_id].is_alive():
+                        item.status = EvaluationStatus.FAILED
+                        item.completed_at = now
+                        item.error_message = "Evaluation was interrupted by backend server restart or process termination."
+                        self.repo.save_or_update_evaluation(item)
+                        reconciled += 1
+        return reconciled
 
     def create_evaluation(self, config: EvaluationConfig) -> EvaluationRun:
         """
@@ -109,10 +133,14 @@ class EvaluationService:
                     f"Artifact '{config.artifact_id}' failed validation: {'; '.join(val_res.errors)}"
                 )
 
-        # 2. Verify dataset exists
+        # 2. Verify dataset exists and is valid
         report = self.dataset_service.get_dataset(config.dataset_id) or self.dataset_service.get_report(config.dataset_id)
         if not report:
             raise ValueError(f"Validation dataset '{config.dataset_id}' not found.")
+        if hasattr(report, "is_valid") and not report.is_valid:
+            raise ValueError(f"Validation dataset '{config.dataset_id}' has validation errors and cannot be used for evaluation.")
+        if config.split not in ("validation", "eval", "test", "train"):
+            raise ValueError(f"Invalid evaluation split '{config.split}'. Must be one of validation, eval, test, train.")
 
         # 3. Prevent duplicate active evaluation runs
         active_evals, _ = self.repo.list_evaluations(
@@ -142,24 +170,33 @@ class EvaluationService:
 
     def start_evaluation(self, evaluation_id: str, background: bool = True) -> EvaluationRun:
         """Launches evaluation execution either in background thread or synchronously."""
-        eval_run = self.repo.get_evaluation(evaluation_id)
-        if not eval_run:
-            raise ValueError(f"Evaluation '{evaluation_id}' not found.")
-
         with self._lock:
+            eval_run = self.repo.get_evaluation(evaluation_id)
+            if not eval_run:
+                raise ValueError(f"Evaluation '{evaluation_id}' not found.")
+
+            # Duplicate start prevention
+            if evaluation_id in self._active_threads and self._active_threads[evaluation_id].is_alive():
+                logger.warning(f"Evaluation worker thread for '{evaluation_id}' is already running. Duplicate start ignored.")
+                return eval_run
+
+            if eval_run.status != EvaluationStatus.QUEUED:
+                raise ValueError(f"Evaluation '{evaluation_id}' cannot be started from status '{eval_run.status.value}'.")
+
             self._cancellation_flags[evaluation_id] = False
 
-        if background:
-            thread = threading.Thread(
-                target=self._execute_evaluation,
-                args=(evaluation_id,),
-                daemon=True,
-            )
-            thread.start()
-            return eval_run
-        else:
-            self._execute_evaluation(evaluation_id)
-            return self.repo.get_evaluation(evaluation_id) or eval_run
+            if background:
+                thread = threading.Thread(
+                    target=self._execute_evaluation,
+                    args=(evaluation_id,),
+                    daemon=True,
+                )
+                self._active_threads[evaluation_id] = thread
+                thread.start()
+                return eval_run
+
+        self._execute_evaluation(evaluation_id)
+        return self.repo.get_evaluation(evaluation_id) or eval_run
 
     def cancel_evaluation(self, evaluation_id: str) -> EvaluationRun:
         """Requests cancellation of an ongoing evaluation job."""
@@ -208,7 +245,23 @@ class EvaluationService:
                 raise ValueError(f"Dataset '{config.dataset_id}' has no normalized records.")
 
             report = self.dataset_service.get_dataset(config.dataset_id)
-            schema_type = report.schema_type.value if report and report.schema_type else "instruction"
+            schema = None
+            if report is not None:
+                st = getattr(report, "schema_type", None)
+                ds = getattr(report, "detected_schema", None)
+                if st is not None and hasattr(st, "value") and type(st.value).__name__ != "MagicMock":
+                    schema = st.value
+                elif isinstance(st, str):
+                    schema = st
+                elif ds is not None and hasattr(ds, "value") and type(ds.value).__name__ != "MagicMock":
+                    schema = ds.value
+                elif isinstance(ds, str):
+                    schema = ds
+                elif st is not None and type(st).__name__ != "MagicMock":
+                    schema = getattr(st, "value", str(st))
+                elif ds is not None and type(ds).__name__ != "MagicMock":
+                    schema = getattr(ds, "value", str(ds))
+            schema_type = str(schema) if schema else "instruction"
 
             # Determine validation subset
             if len(raw_samples) > config.max_samples:
@@ -333,6 +386,9 @@ class EvaluationService:
             eval_run.error_message = _sanitize_string(str(e))
             self.repo.save_or_update_evaluation(eval_run)
             logger.error(f"Evaluation {evaluation_id} failed: {e}", exc_info=True)
+        finally:
+            with self._lock:
+                self._active_threads.pop(evaluation_id, None)
 
     # -------------------------------------------------------------
     # Model Loading and Evaluation Math

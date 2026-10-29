@@ -94,7 +94,8 @@ class TrainingJob:
         self._hf_token = hf_token
         self.repo = repo or get_run_repository()
 
-        self.status = TrainingRunStatus.QUEUED
+        self._lock = threading.RLock()
+        self._status = TrainingRunStatus.QUEUED
         self.created_at = datetime.now(timezone.utc).isoformat()
         self.started_at: Optional[str] = None
         self.completed_at: Optional[str] = None
@@ -118,11 +119,30 @@ class TrainingJob:
             self.quantization_info = config.to_quantization_dict()
 
         self._cancel_event = threading.Event()
-        self._lock = threading.Lock()
         self.artifact_files: List[str] = []
         self.adapter_config: Dict[str, Any] = {}
         self.events: List[TrainingEvent] = []
         self.logs: List[TrainingLogEntry] = []
+
+    @property
+    def status(self) -> TrainingRunStatus:
+        return self._status
+
+    @status.setter
+    def status(self, new_status: Union[TrainingRunStatus, str]) -> None:
+        if isinstance(new_status, str):
+            new_status = TrainingRunStatus(new_status)
+        terminal_statuses = {
+            TrainingRunStatus.COMPLETED,
+            TrainingRunStatus.FAILED,
+            TrainingRunStatus.CANCELLED,
+        }
+        if hasattr(self, "_status") and self._status in terminal_statuses:
+            if new_status != self._status:
+                raise ValueError(
+                    f"Invalid status transition: Run '{self.run_id}' is in terminal state '{self._status.value}' and cannot transition to '{new_status.value}'."
+                )
+        self._status = new_status
 
     @property
     def is_cancelled(self) -> bool:
@@ -321,6 +341,7 @@ class JobManager:
         dataset_service: Optional[TrainingDatasetService] = None,
         engine: Optional[TrainingEngine] = None,
         run_repo: Optional[RunRepository] = None,
+        reconcile_on_init: bool = False,
     ) -> None:
         self.runs_output_dir = runs_output_dir or settings.runs_output_dir
         self.model_loader = model_loader or get_model_loader_service()
@@ -330,8 +351,51 @@ class JobManager:
 
         os.makedirs(self.runs_output_dir, exist_ok=True)
         self._jobs: Dict[str, TrainingJob] = {}
+        self._active_threads: Dict[str, threading.Thread] = {}
         self._idempotency_map: Dict[str, str] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        if reconcile_on_init:
+            self.reconcile_interrupted_runs()
+
+    def reconcile_interrupted_runs(self) -> int:
+        """
+        Reconciles orphaned runs from SQLite that were left in active/non-terminal
+        states across a backend restart or shutdown. Marks them FAILED so they
+        are not falsely reported as training when the process is not executing them.
+        """
+        active_states = [
+            TrainingRunStatus.QUEUED.value,
+            TrainingRunStatus.VALIDATING.value,
+            TrainingRunStatus.LOADING_MODEL.value,
+            TrainingRunStatus.PREPARING_DATASET.value,
+            TrainingRunStatus.TRAINING.value,
+            TrainingRunStatus.SAVING.value,
+        ]
+        reconciled = 0
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            for st in active_states:
+                items, _ = self.run_repo.list_runs(status_filter=st, page=1, page_size=100)
+                for item in items:
+                    if item.run_id not in self._active_threads or not self._active_threads[item.run_id].is_alive():
+                        persisted = self.run_repo.get_run(item.run_id)
+                        if persisted:
+                            persisted["status"] = TrainingRunStatus.FAILED.value
+                            persisted["completed_at"] = now
+                            persisted["error_message"] = "Training run was interrupted by backend server restart or process termination."
+                            self.run_repo.save_or_update_run(persisted)
+                            
+                            fail_event = TrainingEvent(
+                                event_id=f"evt_{uuid.uuid4().hex[:12]}",
+                                run_id=item.run_id,
+                                timestamp=now,
+                                event_type=TrainingEventType.TRAINING_FAILED,
+                                severity=EventSeverity.ERROR,
+                                message="Training run was interrupted by backend server restart or process termination.",
+                            )
+                            self.run_repo.add_event(fail_event)
+                            reconciled += 1
+        return reconciled
 
     def create_job(
         self,
@@ -487,20 +551,31 @@ class JobManager:
 
     def start_job(self, run_id: str, background: bool = True) -> TrainingJob:
         """Starts executing the job lifecycle either in a background thread or synchronously."""
-        job = self.get_job(run_id)
-        if not job:
-            raise KeyError(f"Training run '{run_id}' not found.")
+        with self._lock:
+            job = self.get_job(run_id)
+            if not job:
+                raise KeyError(f"Training run '{run_id}' not found.")
 
-        if background:
-            thread = threading.Thread(
-                target=self._execute_job_lifecycle,
-                args=(job,),
-                daemon=True,
-                name=f"TrainingRunner-{run_id}",
-            )
-            thread.start()
-        else:
-            self._execute_job_lifecycle(job)
+            # Duplicate worker launch prevention:
+            if run_id in self._active_threads and self._active_threads[run_id].is_alive():
+                logger.warning(f"Training worker thread for '{run_id}' is already running. Duplicate start ignored.")
+                return job
+
+            if job.status != TrainingRunStatus.QUEUED:
+                logger.warning(f"Cannot start training run '{run_id}' because status is already '{job.status.value}'.")
+                return job
+
+            if background:
+                thread = threading.Thread(
+                    target=self._execute_job_lifecycle,
+                    args=(job,),
+                    daemon=True,
+                    name=f"TrainingRunner-{run_id}",
+                )
+                self._active_threads[run_id] = thread
+                thread.start()
+            else:
+                self._execute_job_lifecycle(job)
 
         return job
 
@@ -745,6 +820,9 @@ class JobManager:
                 message=f"Training run failed: {clean_err}",
             )
             logger.error(f"Training run {job.run_id} failed: {clean_err}", exc_info=True)
+        finally:
+            with self._lock:
+                self._active_threads.pop(job.run_id, None)
 
     def get_artifacts_metadata(self, run_id: str) -> Optional[TrainingArtifactMetadata]:
         """Retrieves and validates artifact metadata for a completed run."""
