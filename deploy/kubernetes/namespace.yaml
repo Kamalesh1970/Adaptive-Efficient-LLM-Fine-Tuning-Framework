@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: adaptive-studio
+  labels:
+    app.kubernetes.io/name: adaptive-studio
+    app.kubernetes.io/part-of: adaptive-llm-finetuning

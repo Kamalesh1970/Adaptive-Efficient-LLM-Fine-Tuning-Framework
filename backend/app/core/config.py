@@ -54,6 +54,14 @@ class AppSettings(BaseModel):
         default="artifacts/exports",
         description="Directory to store exported adapter packages"
     )
+    artifacts_dir: str = Field(
+        default="artifacts",
+        description="Root directory for artifacts"
+    )
+    artifacts_root: str = Field(
+        default="artifacts",
+        description="Root directory for artifacts"
+    )
     allow_remote_code: bool = Field(
         default=False,
         description="Whether to permit execution of remote custom model code (strictly False by default)"

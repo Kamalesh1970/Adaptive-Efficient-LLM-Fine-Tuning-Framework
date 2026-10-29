@@ -1,0 +1,99 @@
+# ==============================================================================
+# Adaptive LLM Fine-Tuning Studio - Docker Compose Configuration
+# ==============================================================================
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adaptive-studio-backend:0.10.0
+    container_name: adaptive-studio-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_NAME=Adaptive LLM Fine-Tuning Studio
+      - APP_ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - CORS_ORIGINS=["http://localhost:3000","http://localhost:5173","http://127.0.0.1:3000"]
+      - ARTIFACTS_ROOT=/app/artifacts
+      - DATASETS_ROOT=/app/artifacts/datasets
+    volumes:
+      - studio-artifacts:/app/artifacts
+      - studio-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: adaptive-studio-frontend:0.10.0
+    container_name: adaptive-studio-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:80/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  # Optional GPU-accelerated backend worker profile
+  backend-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adaptive-studio-backend-gpu:0.10.0
+    container_name: adaptive-studio-backend-gpu
+    profiles:
+      - gpu
+    ports:
+      - "8001:8000"
+    environment:
+      - APP_NAME=Adaptive LLM Fine-Tuning Studio (GPU)
+      - APP_ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - studio-artifacts:/app/artifacts
+      - studio-data:/app/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Optional inference serving backend profile (vLLM / llama.cpp)
+  inference-serving:
+    image: vllm/vllm-openai:latest
+    container_name: adaptive-studio-vllm
+    profiles:
+      - inference
+    ports:
+      - "8080:8000"
+    environment:
+      - MODEL_NAME=meta-llama/Llama-3.2-1B-Instruct
+    volumes:
+      - studio-artifacts:/models:ro
+    command: ["--model", "/models/base_model", "--port", "8000"]
+    restart: "no"
+
+volumes:
+  studio-artifacts:
+    name: adaptive-studio-artifacts
+  studio-data:
+    name: adaptive-studio-data

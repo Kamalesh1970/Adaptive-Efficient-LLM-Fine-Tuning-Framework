@@ -205,6 +205,63 @@ class RunRepository:
                 CREATE INDEX IF NOT EXISTS idx_evaluations_run_id ON evaluations (run_id);
                 CREATE INDEX IF NOT EXISTS idx_evaluations_artifact_id ON evaluations (artifact_id);
                 CREATE INDEX IF NOT EXISTS idx_evaluations_status ON evaluations (status);
+
+                CREATE TABLE IF NOT EXISTS quantization_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    method TEXT NOT NULL,
+                    source_reference TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    elapsed_seconds REAL DEFAULT 0.0,
+                    output_artifact_path TEXT,
+                    original_size_bytes INTEGER,
+                    quantized_size_bytes INTEGER,
+                    size_reduction_ratio REAL,
+                    sha256 TEXT,
+                    logs_json TEXT,
+                    error_message TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_quant_jobs_status ON quantization_jobs (status);
+                CREATE INDEX IF NOT EXISTS idx_quant_jobs_created ON quantization_jobs (created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS export_jobs (
+                    export_id TEXT PRIMARY KEY,
+                    export_type TEXT NOT NULL,
+                    source_reference TEXT NOT NULL,
+                    quantization_type TEXT,
+                    status TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    output_path TEXT,
+                    file_size_bytes INTEGER,
+                    sha256 TEXT,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    logs_json TEXT,
+                    error_message TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_export_jobs_status ON export_jobs (status);
+
+                CREATE TABLE IF NOT EXISTS serving_instances (
+                    instance_id TEXT PRIMARY KEY,
+                    model_reference TEXT NOT NULL,
+                    backend TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL,
+                    config_json TEXT NOT NULL,
+                    pid INTEGER,
+                    created_at TEXT NOT NULL,
+                    ready_at TEXT,
+                    stopped_at TEXT,
+                    error_message TEXT,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_serving_status ON serving_instances (status);
             """)
 
     def save_or_update_run(self, run_data: Dict[str, Any]) -> None:
@@ -748,6 +805,248 @@ class RunRepository:
 
             evaluations = [self._row_to_evaluation(r) for r in rows]
             return evaluations, total
+
+    # ─── Phase 10: Quantization Jobs CRUD ───────────────────────────────────────
+
+    def save_or_update_quantization_job(self, job_data: Dict[str, Any]) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        job_id = job_data["job_id"]
+        config_obj = job_data.get("config", {})
+        config_dict = config_obj if isinstance(config_obj, dict) else config_obj.model_dump(mode="json")
+        config_json = json.dumps(_sanitize_dict_secrets(config_dict))
+        logs_json = json.dumps(job_data.get("logs", []))
+
+        method_val = job_data.get("method", "bnb_4bit")
+        if hasattr(method_val, "value"):
+            method_val = method_val.value
+        status_val = job_data.get("status", "queued")
+        if hasattr(status_val, "value"):
+            status_val = status_val.value
+
+        with self._lock, self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO quantization_jobs (
+                    job_id, method, source_reference, status, config_json,
+                    created_at, started_at, completed_at, elapsed_seconds,
+                    output_artifact_path, original_size_bytes, quantized_size_bytes,
+                    size_reduction_ratio, sha256, logs_json, error_message, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    status = CASE 
+                        WHEN quantization_jobs.status IN ('completed', 'failed', 'cancelled') 
+                        THEN quantization_jobs.status 
+                        ELSE excluded.status 
+                    END,
+                    started_at = COALESCE(excluded.started_at, quantization_jobs.started_at),
+                    completed_at = COALESCE(excluded.completed_at, quantization_jobs.completed_at),
+                    elapsed_seconds = excluded.elapsed_seconds,
+                    output_artifact_path = COALESCE(excluded.output_artifact_path, quantization_jobs.output_artifact_path),
+                    original_size_bytes = COALESCE(excluded.original_size_bytes, quantization_jobs.original_size_bytes),
+                    quantized_size_bytes = COALESCE(excluded.quantized_size_bytes, quantization_jobs.quantized_size_bytes),
+                    size_reduction_ratio = COALESCE(excluded.size_reduction_ratio, quantization_jobs.size_reduction_ratio),
+                    sha256 = COALESCE(excluded.sha256, quantization_jobs.sha256),
+                    logs_json = excluded.logs_json,
+                    error_message = COALESCE(excluded.error_message, quantization_jobs.error_message),
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    job_id,
+                    str(method_val),
+                    job_data.get("source_reference", ""),
+                    str(status_val),
+                    config_json,
+                    job_data.get("created_at", now),
+                    job_data.get("started_at"),
+                    job_data.get("completed_at"),
+                    float(job_data.get("elapsed_seconds", 0.0)),
+                    job_data.get("output_artifact_path"),
+                    job_data.get("original_size_bytes"),
+                    job_data.get("quantized_size_bytes"),
+                    job_data.get("size_reduction_ratio"),
+                    job_data.get("sha256"),
+                    logs_json,
+                    job_data.get("error_message"),
+                    now,
+                ),
+            )
+
+    def get_quantization_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM quantization_jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["config"] = json.loads(d.get("config_json") or "{}")
+            d["logs"] = json.loads(d.get("logs_json") or "[]")
+            return d
+
+    def list_quantization_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM quantization_jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["config"] = json.loads(d.get("config_json") or "{}")
+                d["logs"] = json.loads(d.get("logs_json") or "[]")
+                result.append(d)
+            return result
+
+    # ─── Phase 10: Export Jobs CRUD (GGUF) ──────────────────────────────────────
+
+    def save_or_update_export_job(self, export_data: Dict[str, Any]) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        export_id = export_data["export_id"]
+        config_obj = export_data.get("config", {})
+        config_dict = config_obj if isinstance(config_obj, dict) else config_obj.model_dump(mode="json")
+        config_json = json.dumps(_sanitize_dict_secrets(config_dict))
+        logs_json = json.dumps(export_data.get("logs", []))
+
+        export_type = export_data.get("export_type", "gguf")
+        if hasattr(export_type, "value"):
+            export_type = export_type.value
+        quant_type = export_data.get("quantization_type")
+        if hasattr(quant_type, "value"):
+            quant_type = quant_type.value
+        status_val = export_data.get("status", "queued")
+        if hasattr(status_val, "value"):
+            status_val = status_val.value
+
+        with self._lock, self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO export_jobs (
+                    export_id, export_type, source_reference, quantization_type,
+                    status, config_json, output_path, file_size_bytes, sha256,
+                    created_at, completed_at, logs_json, error_message, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(export_id) DO UPDATE SET
+                    status = CASE 
+                        WHEN export_jobs.status IN ('completed', 'failed', 'cancelled') 
+                        THEN export_jobs.status 
+                        ELSE excluded.status 
+                    END,
+                    output_path = COALESCE(excluded.output_path, export_jobs.output_path),
+                    file_size_bytes = COALESCE(excluded.file_size_bytes, export_jobs.file_size_bytes),
+                    sha256 = COALESCE(excluded.sha256, export_jobs.sha256),
+                    completed_at = COALESCE(excluded.completed_at, export_jobs.completed_at),
+                    logs_json = excluded.logs_json,
+                    error_message = COALESCE(excluded.error_message, export_jobs.error_message),
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    export_id,
+                    str(export_type),
+                    export_data.get("source_reference", ""),
+                    str(quant_type) if quant_type else None,
+                    str(status_val),
+                    config_json,
+                    export_data.get("output_path"),
+                    export_data.get("file_size_bytes"),
+                    export_data.get("sha256"),
+                    export_data.get("created_at", now),
+                    export_data.get("completed_at"),
+                    logs_json,
+                    export_data.get("error_message"),
+                    now,
+                ),
+            )
+
+    def get_export_job(self, export_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM export_jobs WHERE export_id = ?", (export_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["config"] = json.loads(d.get("config_json") or "{}")
+            d["logs"] = json.loads(d.get("logs_json") or "[]")
+            return d
+
+    def list_export_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM export_jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["config"] = json.loads(d.get("config_json") or "{}")
+                d["logs"] = json.loads(d.get("logs_json") or "[]")
+                result.append(d)
+            return result
+
+    # ─── Phase 10: Serving Instances CRUD (vLLM) ────────────────────────────────
+
+    def save_or_update_serving_instance(self, inst_data: Dict[str, Any]) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        instance_id = inst_data["instance_id"]
+        config_obj = inst_data.get("config", {})
+        config_dict = config_obj if isinstance(config_obj, dict) else config_obj.model_dump(mode="json")
+        config_json = json.dumps(_sanitize_dict_secrets(config_dict))
+
+        backend_val = inst_data.get("backend", "vllm")
+        if hasattr(backend_val, "value"):
+            backend_val = backend_val.value
+        status_val = inst_data.get("status", "validating")
+        if hasattr(status_val, "value"):
+            status_val = status_val.value
+
+        with self._lock, self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO serving_instances (
+                    instance_id, model_reference, backend, status, host, port,
+                    config_json, pid, created_at, ready_at, stopped_at, error_message, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(instance_id) DO UPDATE SET
+                    status = excluded.status,
+                    host = excluded.host,
+                    port = excluded.port,
+                    pid = COALESCE(excluded.pid, serving_instances.pid),
+                    ready_at = COALESCE(excluded.ready_at, serving_instances.ready_at),
+                    stopped_at = COALESCE(excluded.stopped_at, serving_instances.stopped_at),
+                    error_message = COALESCE(excluded.error_message, serving_instances.error_message),
+                    updated_at = excluded.updated_at;
+                """,
+                (
+                    instance_id,
+                    inst_data.get("model_reference", ""),
+                    str(backend_val),
+                    str(status_val),
+                    inst_data.get("host", "127.0.0.1"),
+                    int(inst_data.get("port", 8080)),
+                    config_json,
+                    inst_data.get("pid"),
+                    inst_data.get("created_at", now),
+                    inst_data.get("ready_at"),
+                    inst_data.get("stopped_at"),
+                    inst_data.get("error_message"),
+                    now,
+                ),
+            )
+
+    def get_serving_instance(self, instance_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM serving_instances WHERE instance_id = ?", (instance_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["config"] = json.loads(d.get("config_json") or "{}")
+            return d
+
+    def list_serving_instances(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._lock, self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM serving_instances ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                d["config"] = json.loads(d.get("config_json") or "{}")
+                result.append(d)
+            return result
 
 
 

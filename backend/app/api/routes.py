@@ -1065,4 +1065,365 @@ def get_evaluation_results(evaluation_id: str) -> EvaluationResultsResponse:
     )
 
 
+# ==============================================================================
+# Phase 10: Containerization, Kubernetes, Quantization, GGUF & Multi-GPU Routes
+# ==============================================================================
+
+from backend.app.schemas.quantization import (
+    PostTrainingQuantizationConfig,
+    QuantizationCapability,
+    QuantizationJobRecord,
+)
+from backend.app.schemas.export import (
+    GGUFExportConfig,
+    GGUFExportJobRecord,
+)
+from backend.app.schemas.serving import (
+    ServingConfig,
+    ServingInstanceRecord,
+    SmokeInferenceRequest,
+    SmokeInferenceResponse,
+)
+from backend.app.schemas.distributed import (
+    MultiGPUSystemReport,
+    DistributedTrainingConfig,
+)
+from backend.app.services.quantization_service import (
+    get_quantization_service,
+    QuantizationError,
+    QuantizationCompatibilityError,
+    QuantizationDependencyError,
+)
+from backend.app.services.gguf_export_service import (
+    get_gguf_export_service,
+    GGUFExportError,
+    GGUFEligibilityError,
+)
+from backend.app.services.vllm_service import (
+    get_vllm_service,
+    ServingError,
+    ServingCompatibilityError,
+)
+from backend.app.services.distributed_service import (
+    get_distributed_service,
+    DistributedConfigurationError,
+)
+
+
+# ─── 1. Kubernetes & Deployment Status ──────────────────────────────────────────
+
+@router.get(
+    "/system/kubernetes/validate",
+    summary="Validate Kubernetes Deployment Manifests",
+    tags=["Deployment & Infrastructure"]
+)
+def validate_kubernetes_manifests() -> Dict[str, Any]:
+    """Validates syntax, structure, and required metadata for all Kubernetes manifests."""
+    import glob
+    import yaml
+
+    manifest_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "deploy", "kubernetes"))
+    if not os.path.isdir(manifest_dir):
+        return {"is_valid": False, "manifest_count": 0, "errors": [f"Directory {manifest_dir} does not exist."]}
+
+    yaml_files = sorted(glob.glob(os.path.join(manifest_dir, "*.yaml")))
+    manifests_summary = []
+    errors = []
+
+    for fpath in yaml_files:
+        fname = os.path.basename(fpath)
+        try:
+            with open(fpath, "r", encoding="utf-8") as fh:
+                docs = list(yaml.safe_load_all(fh))
+                for idx, doc in enumerate(docs):
+                    if not doc:
+                        continue
+                    if "apiVersion" not in doc or "kind" not in doc or "metadata" not in doc:
+                        errors.append(f"{fname} (doc {idx}): Missing apiVersion, kind, or metadata.")
+                    else:
+                        manifests_summary.append({
+                            "filename": fname,
+                            "kind": doc.get("kind"),
+                            "name": doc.get("metadata", {}).get("name"),
+                            "namespace": doc.get("metadata", {}).get("namespace", "default"),
+                        })
+        except Exception as e:
+            errors.append(f"{fname}: YAML parsing error: {str(e)}")
+
+    return {
+        "is_valid": len(errors) == 0,
+        "manifest_count": len(yaml_files),
+        "manifests": manifests_summary,
+        "errors": errors,
+    }
+
+
+# ─── 2. Advanced Quantization Endpoints ────────────────────────────────────────
+
+@router.get(
+    "/quantization/capabilities",
+    response_model=List[QuantizationCapability],
+    summary="List Supported Quantization Capabilities",
+    tags=["Advanced Quantization"]
+)
+def get_quantization_capabilities() -> List[QuantizationCapability]:
+    """Returns capability status for all supported quantization methods on this host."""
+    service = get_quantization_service()
+    return service.get_capabilities()
+
+
+@router.post(
+    "/quantization/jobs",
+    response_model=QuantizationJobRecord,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create & Launch Post-Training Quantization Job",
+    tags=["Advanced Quantization"]
+)
+def create_quantization_job(config: PostTrainingQuantizationConfig) -> QuantizationJobRecord:
+    """Launches a post-training model quantization job."""
+    service = get_quantization_service()
+    try:
+        job = service.create_quantization_job(config)
+        return service.start_quantization(job.job_id, background=True)
+    except QuantizationCompatibilityError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except QuantizationDependencyError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.get(
+    "/quantization/jobs",
+    response_model=List[QuantizationJobRecord],
+    summary="List Quantization Jobs",
+    tags=["Advanced Quantization"]
+)
+def list_quantization_jobs() -> List[QuantizationJobRecord]:
+    """Returns historical and running quantization jobs."""
+    service = get_quantization_service()
+    return service.list_jobs()
+
+
+@router.get(
+    "/quantization/jobs/{job_id}",
+    response_model=QuantizationJobRecord,
+    summary="Get Quantization Job Status",
+    tags=["Advanced Quantization"]
+)
+def get_quantization_job(job_id: str) -> QuantizationJobRecord:
+    """Retrieves status and logs for a quantization job."""
+    service = get_quantization_service()
+    job = service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job '{job_id}' not found.")
+    return job
+
+
+@router.post(
+    "/quantization/jobs/{job_id}/cancel",
+    response_model=QuantizationJobRecord,
+    summary="Cancel Quantization Job",
+    tags=["Advanced Quantization"]
+)
+def cancel_quantization_job(job_id: str) -> QuantizationJobRecord:
+    """Cancels an active or queued quantization job."""
+    service = get_quantization_service()
+    try:
+        return service.cancel_job(job_id)
+    except QuantizationError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# ─── 3. GGUF Model Export Endpoints ────────────────────────────────────────────
+
+@router.post(
+    "/export/gguf",
+    response_model=GGUFExportJobRecord,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create & Launch GGUF Export Job",
+    tags=["Model Export (GGUF)"]
+)
+def export_gguf_model(config: GGUFExportConfig) -> GGUFExportJobRecord:
+    """Creates a GGUF model export job from a trained adapter or base model."""
+    service = get_gguf_export_service()
+    try:
+        job = service.create_export_job(config)
+        return service.start_export(job.export_id, background=True)
+    except GGUFEligibilityError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.get(
+    "/export/gguf",
+    response_model=List[GGUFExportJobRecord],
+    summary="List GGUF Export Jobs",
+    tags=["Model Export (GGUF)"]
+)
+def list_gguf_export_jobs() -> List[GGUFExportJobRecord]:
+    """Lists all GGUF export jobs."""
+    service = get_gguf_export_service()
+    return service.list_jobs()
+
+
+@router.get(
+    "/export/gguf/{export_id}",
+    response_model=GGUFExportJobRecord,
+    summary="Get GGUF Export Job Status",
+    tags=["Model Export (GGUF)"]
+)
+def get_gguf_export_job(export_id: str) -> GGUFExportJobRecord:
+    """Retrieves status and metadata for a GGUF export job."""
+    service = get_gguf_export_service()
+    job = service.get_job(export_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Export job '{export_id}' not found.")
+    return job
+
+
+@router.get(
+    "/export/gguf/{export_id}/download",
+    summary="Download Exported GGUF Model Artifact",
+    tags=["Model Export (GGUF)"]
+)
+def download_gguf_artifact(export_id: str):
+    """Safely downloads the generated GGUF binary file."""
+    service = get_gguf_export_service()
+    try:
+        filepath = service.resolve_download_path(export_id)
+        filename = os.path.basename(filepath)
+        return FileResponse(
+            path=filepath,
+            filename=filename,
+            media_type="application/octet-stream",
+        )
+    except GGUFExportError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+# ─── 4. vLLM Model Serving Endpoints ───────────────────────────────────────────
+
+@router.get(
+    "/serving/capabilities",
+    summary="Check Model Serving Capabilities",
+    tags=["Inference Serving (vLLM)"]
+)
+def get_serving_capabilities() -> Dict[str, Any]:
+    """Returns vLLM and inference serving capability on current machine."""
+    service = get_vllm_service()
+    return service.get_serving_capabilities()
+
+
+@router.post(
+    "/serving/instances",
+    response_model=ServingInstanceRecord,
+    status_code=status.HTTP_201_CREATED,
+    summary="Start vLLM Serving Instance",
+    tags=["Inference Serving (vLLM)"]
+)
+def start_serving_instance(config: ServingConfig) -> ServingInstanceRecord:
+    """Starts a supervised inference serving instance."""
+    service = get_vllm_service()
+    try:
+        return service.start_serving(config)
+    except ServingCompatibilityError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.get(
+    "/serving/instances",
+    response_model=List[ServingInstanceRecord],
+    summary="List Serving Instances",
+    tags=["Inference Serving (vLLM)"]
+)
+def list_serving_instances() -> List[ServingInstanceRecord]:
+    """Lists all active and stopped inference serving instances."""
+    service = get_vllm_service()
+    return service.list_serving_instances()
+
+
+@router.get(
+    "/serving/instances/{instance_id}",
+    response_model=ServingInstanceRecord,
+    summary="Get Serving Instance Status",
+    tags=["Inference Serving (vLLM)"]
+)
+def get_serving_instance(instance_id: str) -> ServingInstanceRecord:
+    """Retrieves instance health and status."""
+    service = get_vllm_service()
+    inst = service.get_serving_status(instance_id)
+    if not inst:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Instance '{instance_id}' not found.")
+    return inst
+
+
+@router.post(
+    "/serving/instances/{instance_id}/stop",
+    response_model=ServingInstanceRecord,
+    summary="Stop Serving Instance",
+    tags=["Inference Serving (vLLM)"]
+)
+def stop_serving_instance(instance_id: str) -> ServingInstanceRecord:
+    """Gracefully terminates an active serving instance."""
+    service = get_vllm_service()
+    try:
+        return service.stop_serving(instance_id)
+    except ServingError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.post(
+    "/serving/instances/{instance_id}/smoke-test",
+    response_model=SmokeInferenceResponse,
+    summary="Run Bounded Smoke Test Inference",
+    tags=["Inference Serving (vLLM)"]
+)
+def smoke_test_inference(instance_id: str, request: SmokeInferenceRequest) -> SmokeInferenceResponse:
+    """Submits a bounded test prompt with SSRF protections."""
+    service = get_vllm_service()
+    try:
+        return service.test_smoke_inference(instance_id, request)
+    except ServingError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+# ─── 5. Multi-GPU Discovery Endpoints ──────────────────────────────────────────
+
+@router.get(
+    "/system/multi-gpu",
+    response_model=MultiGPUSystemReport,
+    summary="Get Multi-GPU Hardware Report",
+    tags=["Multi-GPU & Distributed"]
+)
+def get_multi_gpu_report() -> MultiGPUSystemReport:
+    """Discovers visible devices and reports multi-GPU training and inference capabilities."""
+    service = get_distributed_service()
+    return service.discover_hardware()
+
+
+@router.post(
+    "/system/multi-gpu/validate",
+    summary="Validate Distributed Training Configuration",
+    tags=["Multi-GPU & Distributed"]
+)
+def validate_distributed_config(config: DistributedTrainingConfig) -> Dict[str, Any]:
+    """Validates requested distributed strategy against actual hardware."""
+    service = get_distributed_service()
+    try:
+        service.validate_distributed_training(config)
+        return {
+            "is_valid": True,
+            "strategy": config.strategy.value,
+            "requested_gpu_count": config.requested_gpu_count,
+            "message": "Distributed configuration validated against active hardware."
+        }
+    except DistributedConfigurationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+
 

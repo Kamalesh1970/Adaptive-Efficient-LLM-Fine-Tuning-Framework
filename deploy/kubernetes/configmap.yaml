@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: studio-config
+  namespace: adaptive-studio
+  labels:
+    app.kubernetes.io/name: adaptive-studio
+    app.kubernetes.io/component: config
+data:
+  APP_NAME: "Adaptive LLM Fine-Tuning Studio"
+  APP_ENV: "production"
+  APP_HOST: "0.0.0.0"
+  APP_PORT: "8000"
+  CORS_ORIGINS: '["http://localhost:3000","http://localhost:80","https://studio.internal"]'
+  ARTIFACTS_ROOT: "/app/artifacts"
+  DATASETS_ROOT: "/app/artifacts/datasets"
+  PYTHONUNBUFFERED: "1"
