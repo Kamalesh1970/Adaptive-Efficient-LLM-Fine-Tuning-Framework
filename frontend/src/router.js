@@ -1,5 +1,10 @@
 // Hash routing, navigation, rendering, and confirm-to-continue step flow
-const $ = s => document.querySelector(s);
+import { $ } from './utils.js';
+import { NAV } from './data/nav.js';
+import { S } from './state.js';
+import { P } from './pages/shared.js';
+import { ok } from './logic/compatRules.js';
+import { useDS } from './pages/dataset.js';
 
 export function go(r) {
   location.hash = r;

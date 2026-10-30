@@ -1,2 +1,7 @@
 // DOM helper
-const $=s=>document.querySelector(s);
+export const $ = s => document.querySelector(s);
+
+if (typeof window !== 'undefined') {
+  window.$ = $;
+}
+

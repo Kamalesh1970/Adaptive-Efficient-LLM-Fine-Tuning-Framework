@@ -1,3 +1,9 @@
+import { S } from '../state.js';
+import { P, hdr, next } from './shared.js';
+import { badge } from '../components/badge.js';
+import { toast } from '../components/toast.js';
+import { parse } from '../logic/parseDataset.js';
+import { go, render, offerNext } from '../router.js';
 import { api } from '../api.js';
 
 P.dataset = function () {

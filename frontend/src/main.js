@@ -4,6 +4,7 @@ import './styles/base.css';
 import './styles/components.css';
 import './styles/backgrounds.css';
 
+import { $ } from './utils.js';
 import { api } from './api.js';
 import { S } from './state.js';
 import { MODELS, setCatalogModels } from './data/models.js';
@@ -13,15 +14,31 @@ import { NAV, TITLES } from './data/nav.js';
 import { parse } from './logic/parseDataset.js';
 import { est, compat, alt, ok } from './logic/compatRules.js';
 import { run, cancelRun } from './logic/simulateRun.js';
-import { useDS } from './pages/dataset.js';
 import { badge } from './components/badge.js';
 import { tooltip, T } from './components/tooltip.js';
 import { toast } from './components/toast.js';
 import { pilot, tlHTML, ask } from './components/pilot.js';
 import { go, nav, render, offerNext } from './router.js';
 
+// Import all page modules to register their routes into P
+import { P, hdr, next } from './pages/shared.js';
+import './pages/dashboard.js';
+import './pages/dataset.js';
+import './pages/models.js';
+import './pages/compat.js';
+import './pages/config.js';
+import './pages/runs.js';
+import './pages/eval.js';
+import './pages/artifacts.js';
+import './pages/settings.js';
+import { useDS } from './pages/dataset.js';
+
 // Attach globals for inline event handlers and page functions
 Object.assign(window, {
+  $,
+  P,
+  hdr,
+  next,
   api,
   S,
   MODELS,
