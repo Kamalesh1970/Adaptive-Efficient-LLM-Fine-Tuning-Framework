@@ -1,10 +1,27 @@
 // Sidebar groups and page titles
 export const NAV = [
-  ["Overview", [["dashboard", "Dashboard"]]],
-  ["Project setup", [["dataset", "Dataset Inspector"], ["models", "Model Hub"], ["compat", "Compatibility Checker"]]],
-  ["Training", [["config", "Training Configuration"], ["runs", "Training Runs"]]],
-  ["Evaluation & artifacts", [["eval", "Evaluation and Export"], ["artifacts", "Artifact Library"]]],
-  ["About", [["settings", "Settings and Project Info"]]],
+  ["Overview", [
+    ["dashboard", "Dashboard"],
+  ]],
+  ["Data & Models", [
+    ["dataset", "Dataset Management"],
+    ["models", "Model Hub"],
+    ["compat", "Compatibility & Preflight"],
+  ]],
+  ["Training & Execution", [
+    ["config", "Training Configuration"],
+    ["runs", "Training Runs & Logs"],
+    ["eval", "Model Evaluation"],
+    ["quant", "Quantization Jobs"],
+  ]],
+  ["Artifacts & Serving", [
+    ["artifacts", "Artifact Registry"],
+    ["serving", "Model Serving & vLLM"],
+  ]],
+  ["Infrastructure", [
+    ["distributed", "Multi-GPU & Distributed"],
+    ["settings", "Settings & Diagnostics"],
+  ]],
 ];
 
 export const TITLES = {};

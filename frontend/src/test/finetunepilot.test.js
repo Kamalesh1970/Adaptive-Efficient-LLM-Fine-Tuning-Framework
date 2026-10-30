@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { parse } from '../logic/parseDataset.js';
 import { est, compat, alt, ok } from '../logic/compatRules.js';
 import { pilot } from '../components/pilot.js';
@@ -13,11 +13,14 @@ import '../pages/compat.js';
 import '../pages/config.js';
 import '../pages/runs.js';
 import '../pages/eval.js';
+import '../pages/quant.js';
 import '../pages/artifacts.js';
+import '../pages/serving.js';
+import '../pages/distributed.js';
 import '../pages/settings.js';
 import { api } from '../api.js';
 
-describe('FineTunePilot Core Logic & UI Tests', () => {
+describe('FineTunePilot Complete Feature Parity & UI Tests', () => {
   beforeEach(() => {
     // Reset state before each test
     Object.assign(S, {
@@ -29,7 +32,13 @@ describe('FineTunePilot Core Logic & UI Tests', () => {
       cfg: { epochs: 3, lr: '0.0002', batch: 8, rank: 16, len: 512 },
       saved: false,
       runs: [],
+      activeRun: null,
+      activeEvents: [],
+      activeCheckpoints: [],
       arts: [],
+      evals: [],
+      quantJobs: [],
+      servingInstances: [],
       log: [],
       prog: 0,
       timer: null,
@@ -41,20 +50,36 @@ describe('FineTunePilot Core Logic & UI Tests', () => {
 
   describe('1. Navigation & Page Rendering', () => {
     it('contains all required sidebar navigation groups and page keys', () => {
-      expect(NAV.length).toBeGreaterThan(3);
+      expect(NAV.length).toBe(5);
       expect(TITLES['dashboard']).toBe('Dashboard');
-      expect(TITLES['dataset']).toBe('Dataset Inspector');
+      expect(TITLES['dataset']).toBe('Dataset Management');
       expect(TITLES['models']).toBe('Model Hub');
-      expect(TITLES['compat']).toBe('Compatibility Checker');
+      expect(TITLES['compat']).toBe('Compatibility & Preflight');
       expect(TITLES['config']).toBe('Training Configuration');
-      expect(TITLES['runs']).toBe('Training Runs');
-      expect(TITLES['eval']).toBe('Evaluation and Export');
-      expect(TITLES['artifacts']).toBe('Artifact Library');
-      expect(TITLES['settings']).toBe('Settings and Project Info');
+      expect(TITLES['runs']).toBe('Training Runs & Logs');
+      expect(TITLES['eval']).toBe('Model Evaluation');
+      expect(TITLES['quant']).toBe('Quantization Jobs');
+      expect(TITLES['artifacts']).toBe('Artifact Registry');
+      expect(TITLES['serving']).toBe('Model Serving & vLLM');
+      expect(TITLES['distributed']).toBe('Multi-GPU & Distributed');
+      expect(TITLES['settings']).toBe('Settings & Diagnostics');
     });
 
-    it('renders all 9 pages to HTML without throwing exceptions', () => {
-      const pageKeys = ['dashboard', 'dataset', 'models', 'compat', 'config', 'runs', 'eval', 'artifacts', 'settings'];
+    it('renders all 12 views to HTML without throwing exceptions', () => {
+      const pageKeys = [
+        'dashboard',
+        'dataset',
+        'models',
+        'compat',
+        'config',
+        'runs',
+        'eval',
+        'quant',
+        'artifacts',
+        'serving',
+        'distributed',
+        'settings',
+      ];
       pageKeys.forEach(key => {
         expect(typeof P[key]).toBe('function');
         const html = P[key]();
@@ -154,7 +179,7 @@ describe('FineTunePilot Core Logic & UI Tests', () => {
     });
   });
 
-  describe('5. Centralized API Client & Backend Integration', () => {
+  describe('5. Centralized API Client & Full Parity Integration', () => {
     it('defines all required real backend API methods', () => {
       expect(typeof api.getHealth).toBe('function');
       expect(typeof api.getSystemStatus).toBe('function');
@@ -163,16 +188,38 @@ describe('FineTunePilot Core Logic & UI Tests', () => {
       expect(typeof api.uploadDataset).toBe('function');
       expect(typeof api.uploadDatasetContent).toBe('function');
       expect(typeof api.getDatasets).toBe('function');
+      expect(typeof api.getDatasetSplits).toBe('function');
+      expect(typeof api.validateDataset).toBe('function');
+      expect(typeof api.getConfigDefaults).toBe('function');
+      expect(typeof api.resetConfig).toBe('function');
       expect(typeof api.validateConfig).toBe('function');
+      expect(typeof api.exportConfigYaml).toBe('function');
+      expect(typeof api.parseConfigYaml).toBe('function');
+      expect(typeof api.runPreflight).toBe('function');
+      expect(typeof api.previewPlan).toBe('function');
       expect(typeof api.createTrainingRun).toBe('function');
       expect(typeof api.getTrainingRuns).toBe('function');
       expect(typeof api.getTrainingRun).toBe('function');
+      expect(typeof api.getTrainingEvents).toBe('function');
       expect(typeof api.getTrainingLogs).toBe('function');
+      expect(typeof api.getCheckpoints).toBe('function');
       expect(typeof api.cancelTrainingRun).toBe('function');
       expect(typeof api.getArtifacts).toBe('function');
+      expect(typeof api.validateArtifact).toBe('function');
+      expect(typeof api.exportArtifact).toBe('function');
       expect(typeof api.getEvaluations).toBe('function');
+      expect(typeof api.createEvaluation).toBe('function');
+      expect(typeof api.getEvaluationResults).toBe('function');
+      expect(typeof api.getQuantizationCapabilities).toBe('function');
+      expect(typeof api.createQuantizationJob).toBe('function');
+      expect(typeof api.getQuantizationJobs).toBe('function');
       expect(typeof api.createGGUFExport).toBe('function');
       expect(typeof api.getServingCapabilities).toBe('function');
+      expect(typeof api.startServing).toBe('function');
+      expect(typeof api.stopServing).toBe('function');
+      expect(typeof api.smokeTestServing).toBe('function');
+      expect(typeof api.getMultiGPUStatus).toBe('function');
+      expect(typeof api.validateMultiGPUStrategy).toBe('function');
       expect(typeof api.validateKubernetes).toBe('function');
     });
 
@@ -191,7 +238,7 @@ describe('FineTunePilot Core Logic & UI Tests', () => {
       expect(MODELS.some(m => m.id === 'meta-llama/Meta-Llama-3-8B')).toBe(true);
     });
 
-    it('manages training run lifecycle and artifacts state cleanly', () => {
+    it('manages complete training run, quantization, serving and artifacts state', () => {
       // Simulate run record addition
       const mockRun = {
         id: 'run-test-123',
@@ -207,10 +254,23 @@ describe('FineTunePilot Core Logic & UI Tests', () => {
 
       // Check eval page rendering with completed run
       const evalHtml = P.eval();
-      expect(evalHtml).toContain('Active Checkpoint');
       expect(evalHtml).toContain('Export GGUF Binary');
 
-      // Simulate artifact addition
+      // Check quant page rendering
+      const quantHtml = P.quant();
+      expect(quantHtml).toContain('Quantization Precision');
+
+      // Check serving page rendering
+      const servingHtml = P.serving();
+      expect(servingHtml).toContain('Model Serving & vLLM');
+      expect(servingHtml).toContain('Send Inference Request');
+
+      // Check distributed page rendering
+      const distHtml = P.distributed();
+      expect(distHtml).toContain('Multi-GPU & Distributed');
+      expect(distHtml).toContain('Validate Strategy');
+
+      // Check artifacts page rendering
       S.arts.push({
         id: 'art-123',
         n: 'LoRA Adapter',

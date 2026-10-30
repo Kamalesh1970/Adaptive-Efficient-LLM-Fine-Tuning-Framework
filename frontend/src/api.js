@@ -44,6 +44,11 @@ export const api = {
   getHealth: () => request('/health'),
   getSystemStatus: () => request('/system/status'),
   getMultiGPUStatus: () => request('/system/multi-gpu'),
+  validateMultiGPUStrategy: (payload) =>
+    request('/system/multi-gpu/validate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   validateKubernetes: () => request('/system/kubernetes/validate'),
 
   // 2. Models
@@ -86,6 +91,7 @@ export const api = {
 
   // 4. Configuration & Preflight
   getConfigDefaults: () => request('/training/config/defaults'),
+  resetConfig: () => request('/training/config/reset', { method: 'POST' }),
   validateConfig: (config) =>
     request('/training/config/validate', {
       method: 'POST',

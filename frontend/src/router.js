@@ -88,11 +88,15 @@ export function render() {
 
 export const NX = {
   dataset: ["models", "Model Hub"],
-  models: ["compat", "Compatibility Checker"],
+  models: ["compat", "Compatibility & Preflight"],
   compat: ["config", "Training Configuration"],
-  config: ["runs", "Training Runs"],
-  runs: ["eval", "Evaluation and Export"],
-  eval: ["artifacts", "Artifact Library"],
+  config: ["runs", "Training Runs & Logs"],
+  runs: ["eval", "Model Evaluation"],
+  eval: ["quant", "Quantization Jobs"],
+  quant: ["artifacts", "Artifact Registry"],
+  artifacts: ["serving", "Model Serving & vLLM"],
+  serving: ["distributed", "Multi-GPU & Distributed"],
+  distributed: ["settings", "Settings & Diagnostics"],
 };
 
 export function offerNext(step, msg) {
