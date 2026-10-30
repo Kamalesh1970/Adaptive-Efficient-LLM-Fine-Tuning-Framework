@@ -1,0 +1,13 @@
+/* Reset, typography, page layout */
+*{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 var(--sans);padding-top:env(safe-area-inset-top,0px)}
+h1,h2,h3{font-family:var(--serif);line-height:1.15;margin:0 0 .5em;font-weight:700}
+h1{font-size:clamp(2rem,5vw,3.4rem);letter-spacing:-.02em}h2{font-size:1.5rem}h3{font-size:1.1rem}
+p{margin:0 0 1em;max-width:68ch}a{color:var(--acc)}
+:focus-visible{outline:3px solid var(--glow);outline-offset:2px}
+.shell{display:grid;grid-template-columns:260px 1fr;min-height:100vh}
+.top{display:none}
+main{padding:clamp(18px,4vw,48px);max-width:1100px;width:100%}
+code,pre,kbd,samp,button,input,select,textarea{font-family:var(--sans);color:inherit}
+::placeholder{color:var(--mute);opacity:1}::selection{background:var(--gold);color:#111D13}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}

@@ -1,14 +1,54 @@
-<!doctype html>
-<html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Adaptive LLM Fine-Tuning Studio</title>
-    <meta name="description" content="Adaptive, resource-aware Large Language Model fine-tuning studio and training workflow." />
-  </head>
-  <body class="bg-studio-bg text-studio-text antialiased min-h-screen selection:bg-studio-accent/20 selection:text-studio-accent">
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>FineTunePilot &mdash; Adaptive LLM Fine-Tuning Studio</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Instrument+Sans:wght@400;500;600&display=swap">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+  <div class="top">
+    <span class="brand" style="margin:0">FineTunePilot</span>
+    <button class="btn" id="mb" aria-expanded="false" aria-controls="side">Menu</button>
+  </div>
+  <div class="shell">
+    <nav class="side" id="side" aria-label="Main"></nav>
+    <main id="app" tabindex="-1"></main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <dialog id="nx" aria-labelledby="nxt">
+    <h2 id="nxt"></h2>
+    <p id="nxm" class="mu"></p>
+    <div class="row">
+      <button class="btn p" id="nxg" data-a="nxgo" autofocus>Continue</button>
+      <button class="btn" data-a="nxstay">Stay here</button>
+    </div>
+  </dialog>
+
+  <dialog id="sum">
+    <h2>Project summary</h2>
+    <pre class="log" id="sumt" style="max-height:none;white-space:pre-wrap"></pre>
+    <div class="row" style="margin-top:14px">
+      <button class="btn p" data-a="copy">Copy summary</button>
+      <button class="btn" data-a="closesum">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="dlg">
+    <form method="dialog" id="nf">
+      <h2>Start a project</h2>
+      <label for="pn">Project name</label>
+      <input id="pn" value="My first fine-tune" required>
+      <p class="mu" style="margin-top:12px">Next you will inspect a dataset, pick a model, and check compatibility.</p>
+      <div class="row">
+        <button class="btn p" value="go">Create project</button>
+        <button class="btn" value="x" formnovalidate>Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
 </html>

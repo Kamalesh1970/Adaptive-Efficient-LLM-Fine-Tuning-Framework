@@ -71,3 +71,8 @@ datasets/*
 backend/datasets/
 logs/
 *.log
+
+# Extra / Backup Frontend Directories
+finetune-frontend/
+frontend-backup/
+

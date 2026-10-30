@@ -1,0 +1,7 @@
+instruction,response
+"Summarize: The cat sat.","A cat sat."
+"Translate hello to French","Bonjour"
+"Translate hello to French","Bonjour"
+"Name a prime number",""
+"What is 2+2?","4"
+"Capital of France?","Paris"

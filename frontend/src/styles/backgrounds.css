@@ -1,0 +1,6 @@
+/* Hero contour lines and faint sidebar grid */
+.hb{position:relative;isolation:isolate;overflow:hidden;padding:clamp(20px,4vw,44px);border:1px solid var(--line);border-radius:16px;margin-bottom:14px}
+.hb::before{content:"";position:absolute;inset:-20%;z-index:-1;pointer-events:none;animation:drift 38s ease-in-out infinite alternate}
+.hb-contour::before{background:repeating-radial-gradient(ellipse 60% 45% at 72% 38%,transparent 0 20px,rgba(147,162,109,.20) 21px 22px),repeating-radial-gradient(ellipse 50% 70% at 18% 82%,transparent 0 26px,rgba(212,175,55,.13) 27px 28px);-webkit-mask-image:radial-gradient(ellipse at 50% 50%,#000 30%,transparent 80%);mask-image:radial-gradient(ellipse at 50% 50%,#000 30%,transparent 80%);animation-duration:55s}
+@keyframes drift{from{transform:translate3d(-4%,-3%,0) scale(1)}to{transform:translate3d(4%,3%,0) scale(1.08)}}
+nav.side{background-image:linear-gradient(rgba(147,162,109,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(147,162,109,.07) 1px,transparent 1px);background-size:32px 32px}

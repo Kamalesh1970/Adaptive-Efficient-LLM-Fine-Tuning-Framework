@@ -83,6 +83,44 @@ class VLLMService:
             ),
         }
 
+    def validate_model_compatibility(self, model_reference: str) -> None:
+        """Validates model identifier to prevent directory traversal and verify suitability."""
+        if not model_reference or not isinstance(model_reference, str):
+            raise ServingCompatibilityError("Model reference must be a non-empty string.")
+        if ".." in model_reference:
+            raise ServingCompatibilityError("Invalid model reference: directory traversal tokens ('..') are not allowed.")
+
+    def validate_quantization_compatibility(self, quantization: Optional[str], cuda_available: bool) -> None:
+        """Validates quantization mode against hardware capabilities."""
+        if not quantization:
+            return
+        valid_quant_types = {"awq", "gptq", "squeezellm", "fp8", "bitsandbytes", "marlin"}
+        q_lower = quantization.lower().strip()
+        if q_lower not in valid_quant_types:
+            raise ServingCompatibilityError(
+                f"Unsupported quantization type '{quantization}'. Supported types: {sorted(list(valid_quant_types))}."
+            )
+        if not cuda_available:
+            raise ServingCompatibilityError(
+                f"Quantized inference with '{quantization}' requires CUDA GPU hardware. System operating in CPU mode."
+            )
+
+    def validate_gpu_memory_configuration(self, gpu_memory_utilization: float, cuda_available: bool) -> None:
+        """Validates GPU memory utilization bounds and allocation safety."""
+        if not (0.1 <= gpu_memory_utilization <= 0.98):
+            raise ServingCompatibilityError(
+                f"gpu_memory_utilization ({gpu_memory_utilization}) must be between 0.1 and 0.98."
+            )
+
+    def check_readiness(self, host: str, port: int, timeout_seconds: float = 1.0) -> bool:
+        """Checks if server readiness endpoint or port is accessible."""
+        import socket
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds):
+                return True
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            return False
+
     def start_serving(self, config: ServingConfig) -> ServingInstanceRecord:
         """
         Validates serving configuration and starts the serving instance.
@@ -98,7 +136,23 @@ class VLLMService:
                         f"Cannot start vLLM serving: {caps['unsupported_reason']}"
                     )
 
-            # 2. Tensor parallel validation
+            # 2. Model & parameter validation
+            self.validate_model_compatibility(config.model_reference)
+            self.validate_quantization_compatibility(config.quantization, caps["cuda_available"])
+            self.validate_gpu_memory_configuration(config.gpu_memory_utilization, caps["cuda_available"])
+
+            # 3. Check for duplicate server on host:port
+            for existing_id, inst in self._instances.items():
+                if (
+                    inst.get("host") == config.host
+                    and inst.get("port") == config.port
+                    and inst.get("status") in (ServingStatus.READY.value, ServingStatus.STARTING_SERVER.value, ServingStatus.VALIDATING.value)
+                ):
+                    raise ServingCompatibilityError(
+                        f"A serving instance ('{existing_id}') is already active on {config.host}:{config.port}."
+                    )
+
+            # 4. Tensor parallel validation
             if config.tensor_parallel_size > 1:
                 gpu_count = caps["cuda_device_count"]
                 if gpu_count < config.tensor_parallel_size:
@@ -106,7 +160,7 @@ class VLLMService:
                         f"Requested tensor_parallel_size={config.tensor_parallel_size} exceeds visible GPU count ({gpu_count})."
                     )
 
-            # 3. Create instance record
+            # 5. Create instance record
             instance_id = f"serve_{uuid.uuid4().hex[:12]}"
             now = datetime.now(timezone.utc).isoformat()
 

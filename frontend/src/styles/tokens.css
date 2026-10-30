@@ -1,0 +1,12 @@
+/* Design tokens: the Forest Moss palette. Change colours here only. */
+:root{color-scheme:dark;
+--moss:#1B2E1E;   /* Deep Forest Moss: page background */
+--spruce:#111D13; /* Dark Spruce: sidebar, cards */
+--sage:#D8E2DC;   /* Frosted Sage: primary text */
+--gold:#D4AF37;   /* Antique Champagne Gold: calls to action */
+--glow:#93A26D;   /* Soft Olive Glow: accents, success */
+--grey:#8fa093;--deep:#0b140c;
+--bg:var(--moss);--surf:var(--spruce);--ink:var(--sage);--mute:#A9B8AC;--line:#2f4733;
+--acc:var(--gold);--accsoft:#223826;--ok:var(--glow);--warn:var(--gold);--bad:#e8878d;
+--serif:Fraunces,Georgia,serif;--sans:"Instrument Sans",system-ui,sans-serif;
+box-sizing:border-box;padding-bottom:env(safe-area-inset-bottom,0px)}
