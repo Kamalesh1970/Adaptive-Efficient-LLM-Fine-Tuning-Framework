@@ -315,17 +315,67 @@ export const PreflightModal: React.FC<PreflightModalProps> = ({
                 </div>
               </div>
 
-              {/* VRAM estimate */}
+              {/* VRAM estimate & breakdown */}
               {estimatedVram !== null && estimatedVram !== undefined && (
                 <div
-                  className="flex items-center justify-between px-3 py-2 rounded-lg bg-studio-input/60 border border-studio-border text-xs font-mono"
+                  className="rounded-lg bg-studio-input/60 border border-studio-border p-3 space-y-2 text-xs font-mono"
                   data-testid="preflight-vram-estimate"
                 >
-                  <span className="text-studio-muted flex items-center gap-1.5">
-                    <MemoryStick className="w-3.5 h-3.5 text-studio-teal" />
-                    Estimated VRAM requirement
-                  </span>
-                  <span className="font-bold text-studio-text">~{estimatedVram} GB</span>
+                  <div className="flex items-center justify-between pb-1.5 border-b border-studio-border/40">
+                    <span className="text-studio-muted flex items-center gap-1.5 font-sans font-medium">
+                      <MemoryStick className="w-3.5 h-3.5 text-studio-teal" />
+                      VRAM Capacity & Peak Estimation
+                    </span>
+                    <span className="font-bold text-studio-text">~{estimatedVram} GB</span>
+                  </div>
+
+                  {result.vram_breakdown ? (
+                    <div className="space-y-1.5 text-[11px] pt-1">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                        <div className="bg-studio-bg/50 p-1.5 rounded border border-studio-border/30">
+                          <span className="text-studio-muted block">Total GPU VRAM</span>
+                          <span className="font-semibold text-studio-text">
+                            {result.vram_breakdown.total_vram_gb ? `${result.vram_breakdown.total_vram_gb} GB` : 'N/A'}
+                          </span>
+                        </div>
+                        <div className="bg-studio-bg/50 p-1.5 rounded border border-studio-border/30">
+                          <span className="text-studio-muted block">Available VRAM</span>
+                          <span className="font-semibold text-studio-text">
+                            {result.vram_breakdown.available_vram_gb ? `${result.vram_breakdown.available_vram_gb} GB` : 'N/A'}
+                          </span>
+                        </div>
+                        <div className="bg-studio-bg/50 p-1.5 rounded border border-studio-border/30">
+                          <span className="text-studio-muted block">Model Weights</span>
+                          <span className="font-semibold text-studio-text">
+                            {result.vram_breakdown.estimated_model_memory_gb ? `${result.vram_breakdown.estimated_model_memory_gb} GB` : 'N/A'}
+                          </span>
+                        </div>
+                        <div className="bg-studio-bg/50 p-1.5 rounded border border-studio-border/30">
+                          <span className="text-studio-muted block">Training & Overhead</span>
+                          <span className="font-semibold text-studio-text">
+                            {result.vram_breakdown.estimated_training_memory_gb ? `${result.vram_breakdown.estimated_training_memory_gb} GB` : 'N/A'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px] text-studio-muted pt-1">
+                        <span>Safety buffer: +{result.vram_breakdown.safety_margin_gb || 0.25} GB</span>
+                        <span className={result.vram_breakdown.is_compatible === false ? 'text-rose-400 font-semibold' : 'text-emerald-400 font-semibold'}>
+                          {result.vram_breakdown.is_compatible === false ? 'Exceeds available VRAM' : 'Hardware profile compatible'}
+                        </span>
+                      </div>
+
+                      {result.vram_breakdown.recommendation && (
+                        <p className="text-[10px] text-amber-300 bg-amber-950/40 p-2 rounded border border-amber-700/40 font-sans mt-1">
+                          {result.vram_breakdown.recommendation}
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+
+                  <p className="text-[9px] text-studio-muted/70 italic font-sans pt-0.5">
+                    * Estimated memory is a predictive projection. Actual runtime footprint distinguishes from real measured GPU VRAM.
+                  </p>
                 </div>
               )}
 

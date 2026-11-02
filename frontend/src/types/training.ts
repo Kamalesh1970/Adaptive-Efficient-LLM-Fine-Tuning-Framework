@@ -287,6 +287,7 @@ export interface PreflightCheckResponse {
   estimated_vram_gb: number | null;
   vram_status?: string | null;
   vram_message?: string | null;
+  vram_breakdown?: Record<string, any> | null;
 }
 
 export interface RunPlan {

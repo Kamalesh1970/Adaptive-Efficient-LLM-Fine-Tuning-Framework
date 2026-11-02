@@ -75,12 +75,22 @@ def get_ml_version_info() -> Dict[str, Optional[str]]:
         "datasets": None,
         "bitsandbytes": None,
     }
+    import importlib.metadata
     for mod in versions.keys():
         try:
             m = __import__(mod)
-            versions[mod] = getattr(m, "__version__", "unknown")
+            ver = getattr(m, "__version__", None)
+            if not ver or ver == "unknown":
+                try:
+                    ver = importlib.metadata.version(mod)
+                except Exception:
+                    ver = "unknown"
+            versions[mod] = ver
         except Exception:
-            versions[mod] = None
+            try:
+                versions[mod] = importlib.metadata.version(mod)
+            except Exception:
+                versions[mod] = None
     return versions
 
 

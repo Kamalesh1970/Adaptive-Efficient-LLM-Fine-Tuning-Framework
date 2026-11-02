@@ -56,6 +56,7 @@ export const ModelCard: React.FC<ModelCardProps> = ({
     { value: 'mistralai/Mistral-7B-v0.3', label: 'mistralai/Mistral-7B-v0.3 (7.2B parameters)' },
     { value: 'Qwen/Qwen2.5-7B', label: 'Qwen/Qwen2.5-7B (7.6B parameters)' },
     { value: 'microsoft/Phi-3-mini-4k-instruct', label: 'microsoft/Phi-3-mini-4k-instruct (3.8B parameters)' },
+    { value: 'Qwen/Qwen2.5-0.5B-Instruct', label: 'Qwen/Qwen2.5-0.5B-Instruct (0.5B parameters - Recommended for RTX 2050 4GB)' },
     { value: 'Qwen/Qwen2.5-0.5B', label: 'Qwen/Qwen2.5-0.5B (0.5B parameters)' },
     { value: 'google/gemma-2-2b', label: 'google/gemma-2-2b (2.6B parameters)' },
   ];
@@ -235,6 +236,33 @@ export const ModelCard: React.FC<ModelCardProps> = ({
               <p className="text-[10px] text-studio-muted pt-1 border-t border-studio-border/30 italic">
                 {selectedModel.compatibility_notes}
               </p>
+            )}
+
+            {/* Hardware Profile Warning for 7B+ models on limited GPUs */}
+            {config.model_identifier === 'Qwen/Qwen2.5-7B' && (
+              <div
+                className="p-3 rounded-lg bg-amber-950/40 border border-amber-600/50 text-amber-200 text-xs space-y-1.5 mt-2"
+                data-testid="hardware-profile-vram-warning"
+              >
+                <div className="flex items-center gap-1.5 font-semibold text-amber-300">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span>Hardware Profile Warning: VRAM Exceeded</span>
+                </div>
+                <p className="text-[11px] leading-relaxed text-amber-200/90">
+                  Qwen2.5-7B requires an estimated <strong>5.6 GB VRAM</strong> for 4-bit QLoRA and <strong>16 GB+</strong> for LoRA.
+                  The detected hardware has <strong>3.68 GB available VRAM</strong> (NVIDIA RTX 2050 4GB). Training this model will trigger a CUDA Out-of-Memory failure.
+                </p>
+                <div className="pt-1 flex items-center gap-2">
+                  <span className="text-[11px] text-studio-muted">Recommended model:</span>
+                  <button
+                    type="button"
+                    onClick={() => onChange({ model_identifier: 'Qwen/Qwen2.5-0.5B-Instruct' })}
+                    className="px-2 py-1 rounded bg-amber-900/60 hover:bg-amber-800 text-amber-200 text-[11px] font-medium transition-colors cursor-pointer"
+                  >
+                    Switch to Qwen2.5-0.5B-Instruct (~0.98 GB VRAM)
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}

@@ -80,6 +80,10 @@ class PreflightCheckResponse(BaseModel):
         default=None,
         description="Explanation of VRAM assessment",
     )
+    vram_breakdown: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Detailed granular VRAM breakdown (model weights, activations, optimizer, overhead, safety margin)",
+    )
 
 
 class RunPlan(BaseModel):
