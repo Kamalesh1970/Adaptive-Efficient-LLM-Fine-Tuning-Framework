@@ -121,6 +121,47 @@ def validate_model_identifier(model_identifier: str) -> str:
     return cleaned
 
 
+def is_model_cached_locally(model_identifier: str) -> Tuple[bool, Optional[str]]:
+    """
+    Checks if a model and its config/tokenizer are available locally on disk or in the Hugging Face cache.
+    Guarantees zero remote network access during check.
+    Returns:
+        (is_available, resolved_path_or_identifier)
+    """
+    if not model_identifier or not isinstance(model_identifier, str):
+        return False, None
+
+    cleaned = model_identifier.strip()
+    # 1. Direct local filesystem directory
+    if os.path.isdir(cleaned):
+        return True, os.path.abspath(cleaned)
+
+    # 2. Check Hugging Face local cache using AutoConfig with local_files_only=True
+    try:
+        from transformers import AutoConfig
+        cfg = AutoConfig.from_pretrained(cleaned, local_files_only=True)
+        return True, cleaned
+    except Exception:
+        pass
+
+    # 3. Direct inspection of Hugging Face cache directory
+    try:
+        from huggingface_hub import scan_cache_dir
+        cache_info = scan_cache_dir()
+        for repo in cache_info.repos:
+            if repo.repo_id == cleaned:
+                for revision in repo.revisions:
+                    snap_dir = getattr(revision, "snapshot_path", None)
+                    if snap_dir and os.path.isdir(snap_dir):
+                        if os.path.isfile(os.path.join(snap_dir, "config.json")):
+                            return True, snap_dir
+    except Exception:
+        pass
+
+    return False, None
+
+
+
 class ModelLoaderService:
     """Service to load causal language models and tokenizers safely."""
 

@@ -6,6 +6,7 @@ token throughput, and side-by-side baseline comparisons.
 """
 
 import os
+import json
 import math
 import time
 import uuid
@@ -274,10 +275,22 @@ class EvaluationService:
             if not artifact:
                 raise ValueError(f"Artifact '{eval_run.artifact_id}' could not be loaded.")
 
-            model_identifier = artifact.model_identifier
+            model_identifier = artifact.base_model_identifier or artifact.model_identifier
             candidate1 = os.path.abspath(os.path.realpath(os.path.join(self.artifact_service.runs_root, artifact.run_id)))
             candidate2 = os.path.abspath(os.path.realpath(artifact.file_reference)) if os.path.isabs(artifact.file_reference) else os.path.abspath(os.path.realpath(os.path.join(".", artifact.file_reference)))
             adapter_dir = candidate1 if os.path.isdir(candidate1) else candidate2
+
+            # Inspect adapter_config.json to ensure exact base model path match
+            if adapter_dir:
+                cfg_path = os.path.join(adapter_dir, "adapter_config.json")
+                if os.path.isfile(cfg_path):
+                    try:
+                        with open(cfg_path, "r", encoding="utf-8") as acf:
+                            acfg = json.load(acf)
+                            if acfg.get("base_model_name_or_path"):
+                                model_identifier = acfg["base_model_name_or_path"]
+                    except Exception as e:
+                        logger.warning(f"Could not read adapter_config.json for artifact {artifact.artifact_id}: {e}")
 
             # 3. Run Fine-Tuned Model Evaluation
             if self._is_cancelled(evaluation_id):
@@ -504,28 +517,64 @@ class EvaluationService:
         hw = get_system_hardware_info()
         device = "cuda" if hw.get("cuda_available") else "cpu"
 
-        # Check local path existence (do not silently download large weights over internet)
-        if not os.path.exists(model_identifier):
+        # Check local path and local Hugging Face cache existence
+        from backend.app.services.model_loader import is_model_cached_locally
+        cached, local_ref = is_model_cached_locally(model_identifier)
+        if not cached:
             raise FileNotFoundError(
-                f"Model path '{model_identifier}' was not found on local disk. "
-                "Automatic remote model downloading is restricted during evaluation."
+                f"Model path '{model_identifier}' was not found on local disk or in the local model cache. "
+                "Automatic remote model downloading is restricted during evaluation. "
+                "Please verify that the base model is available locally before initiating evaluation."
             )
 
+        load_target = local_ref or model_identifier
+
         tokenizer = AutoTokenizer.from_pretrained(
-            model_identifier,
+            load_target,
+            local_files_only=True,
             trust_remote_code=False,
         )
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        base_model = AutoModelForCausalLM.from_pretrained(
-            model_identifier,
-            torch_dtype=torch.float32 if device == "cpu" else torch.float16,
-            device_map="auto" if device == "cuda" else None,
-            trust_remote_code=False,
-        )
-        if device == "cpu":
-            base_model = base_model.to("cpu")
+        # Check if QLoRA 4-bit loading should be used to conserve GPU memory
+        is_qlora = False
+        if adapter_dir:
+            q_file = os.path.join(adapter_dir, "quantization_config.json")
+            if os.path.isfile(q_file):
+                try:
+                    with open(q_file, "r", encoding="utf-8") as qf:
+                        qdata = json.load(qf)
+                        if qdata.get("load_in_4bit"):
+                            is_qlora = True
+                except Exception:
+                    pass
+
+        if is_qlora and device == "cuda":
+            from transformers import BitsAndBytesConfig
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_compute_dtype=torch.float16,
+            )
+            base_model = AutoModelForCausalLM.from_pretrained(
+                load_target,
+                quantization_config=bnb_config,
+                device_map="auto",
+                local_files_only=True,
+                trust_remote_code=False,
+            )
+        else:
+            base_model = AutoModelForCausalLM.from_pretrained(
+                load_target,
+                dtype=torch.float32 if device == "cpu" else torch.float16,
+                device_map="auto" if device == "cuda" else None,
+                local_files_only=True,
+                trust_remote_code=False,
+            )
+            if device == "cpu":
+                base_model = base_model.to("cpu")
 
         if adapter_dir:
             model = PeftModel.from_pretrained(base_model, adapter_dir)

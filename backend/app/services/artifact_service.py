@@ -462,8 +462,15 @@ class ArtifactService:
                         cfg = json.load(f)
                     if not isinstance(cfg, dict):
                         errors.append("'adapter_config.json' does not contain a valid JSON object.")
-                    elif "peft_type" not in cfg and "r" not in cfg:
-                        warnings.append("'adapter_config.json' is missing standard PEFT hyperparameter fields.")
+                    else:
+                        base_model_name = cfg.get("base_model_name_or_path")
+                        if not base_model_name:
+                            warnings.append("'adapter_config.json' is missing 'base_model_name_or_path'.")
+                        elif not artifact.base_model_identifier:
+                            artifact.base_model_identifier = base_model_name
+
+                        if "peft_type" not in cfg and "r" not in cfg:
+                            warnings.append("'adapter_config.json' is missing standard PEFT hyperparameter fields.")
                 except Exception as e:
                     errors.append(f"Corrupted 'adapter_config.json': {str(e)}")
 
@@ -529,21 +536,43 @@ class ArtifactService:
 
         if check_loadable and not errors:
             try:
-                from backend.app.services.model_loader import get_test_model, is_test_model_registered
-                # If a synthetic model is registered for this model identifier, test with it
-                if is_test_model_registered(artifact.model_identifier):
-                    test_m, _ = get_test_model(artifact.model_identifier)
+                from backend.app.services.model_loader import (
+                    get_test_model,
+                    is_test_model_registered,
+                    is_model_cached_locally,
+                )
+                base_id = artifact.base_model_identifier or artifact.model_identifier
+                # 1. If a synthetic model is registered for this model identifier, test with it
+                if is_test_model_registered(base_id) or is_test_model_registered(artifact.model_identifier):
+                    target_id = base_id if is_test_model_registered(base_id) else artifact.model_identifier
+                    test_m, _ = get_test_model(target_id)
                     reload_lora_adapter(test_m, target_dir)
                     is_loadable = True
                 elif is_full_ml_stack_available():
-                    # Real transformers/peft is installed, but check if local weights exist
-                    if os.path.exists(artifact.model_identifier):
+                    # 2. Check if base model is available locally (on disk or in HF cache)
+                    cached, local_ref = is_model_cached_locally(base_id)
+                    if cached:
+                        from transformers import AutoTokenizer
+                        from peft import PeftConfig, load_peft_weights
+
+                        # Verify PEFT config loads cleanly
+                        pcfg = PeftConfig.from_pretrained(target_dir)
+
+                        # Verify tokenizer is available locally
+                        tok = AutoTokenizer.from_pretrained(local_ref or base_id, local_files_only=True)
+
+                        # Test loading adapter weights
+                        weights = load_peft_weights(target_dir, device="cpu")
+                        if not weights:
+                            raise ValueError("Adapter weights file could not produce valid tensors.")
+
                         is_loadable = True
                     else:
                         warnings.append(
-                            f"Base model '{artifact.model_identifier}' is remote. Skipping live weight download during validation."
+                            f"Base model '{base_id}' is not in local cache or disk. Actual model weights could not be loaded locally without downloading."
                         )
-                        is_loadable = True
+                        # Do not report successful model loading if only file checks passed
+                        is_loadable = None
                 else:
                     warnings.append(
                         "Machine learning dependencies (transformers/peft) are not installed. Cannot test live model load."

@@ -10,9 +10,12 @@ import json
 import uuid
 import hashlib
 import random
+import logging
 from io import StringIO
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any
+
+logger = logging.getLogger(__name__)
 
 from backend.app.core.config import settings
 from backend.app.schemas.datasets import (
@@ -569,8 +572,50 @@ class DatasetService:
             text = json.dumps(normalized, sort_keys=True)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+    def _recover_dataset_from_disk(self, dataset_id: str) -> Optional[DatasetValidationReport]:
+        """Recovers an unindexed dataset from the upload directory if it exists on disk."""
+        if dataset_id in self._reports:
+            return self._reports[dataset_id]
+
+        if not os.path.isdir(self.upload_dir):
+            return None
+
+        # Look for matching file in upload_dir
+        prefix = f"{dataset_id}_"
+        for fname in os.listdir(self.upload_dir):
+            if fname.startswith(prefix) or fname == dataset_id:
+                fpath = os.path.join(self.upload_dir, fname)
+                if os.path.isfile(fpath):
+                    orig_name = fname[len(prefix):] if fname.startswith(prefix) else fname
+                    try:
+                        fmt = self.get_format_from_filename(fname)
+                    except ValueError:
+                        fmt = DatasetFormat.JSON
+
+                    try:
+                        sz = os.path.getsize(fpath)
+                        with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                            content = f.read()
+
+                        mtime_iso = datetime.fromtimestamp(os.path.getmtime(fpath), tz=timezone.utc).isoformat()
+                        self._file_map[dataset_id] = fname
+                        self._timestamps[dataset_id] = mtime_iso
+                        report = self.parse_and_validate(
+                            dataset_id=dataset_id,
+                            original_filename=orig_name,
+                            file_format=fmt,
+                            content=content,
+                            file_size_bytes=sz,
+                        )
+                        return report
+                    except Exception as e:
+                        logger.warning(f"Failed to recover dataset '{dataset_id}' from file '{fname}': {e}")
+        return None
+
     def get_report(self, dataset_id: str) -> Optional[DatasetValidationReport]:
-        """Retrieves validation report by dataset ID."""
+        """Retrieves validation report by dataset ID, auto-recovering from disk if needed."""
+        if dataset_id not in self._reports:
+            self._recover_dataset_from_disk(dataset_id)
         return self._reports.get(dataset_id)
 
     def get_dataset(self, dataset_id: str) -> Optional[DatasetValidationReport]:
@@ -578,11 +623,20 @@ class DatasetService:
         return self.get_report(dataset_id)
 
     def get_normalized_samples(self, dataset_id: str) -> Optional[List[Dict[str, Any]]]:
-        """Retrieves cached normalized samples for a dataset ID."""
+        """Retrieves cached normalized samples for a dataset ID, recovering from disk if needed."""
+        if dataset_id not in self._normalized_cache:
+            self._recover_dataset_from_disk(dataset_id)
         return self._normalized_cache.get(dataset_id)
 
     def list_datasets(self) -> List[DatasetSummary]:
-        """Returns summaries of all processed datasets."""
+        """Returns summaries of all processed datasets, auto-discovering any unindexed uploads."""
+        if os.path.isdir(self.upload_dir):
+            for fname in os.listdir(self.upload_dir):
+                if "_" in fname:
+                    possible_id = fname.split("_")[0]
+                    if possible_id.startswith("ds_") and possible_id not in self._reports:
+                        self._recover_dataset_from_disk(possible_id)
+
         summaries = []
         for d_id, r in self._reports.items():
             summaries.append(

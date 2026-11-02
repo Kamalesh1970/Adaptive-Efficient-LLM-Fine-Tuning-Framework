@@ -27,7 +27,8 @@ import {
   createEvaluation, 
   fetchEvaluations, 
   fetchEvaluationDetails, 
-  cancelEvaluation 
+  cancelEvaluation,
+  validateArtifact 
 } from '../../services/api';
 
 interface EvaluationViewProps {
@@ -60,6 +61,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
   const [, setLoading] = useState<boolean>(true);
   const [starting, setStarting] = useState<boolean>(false);
   const [cancelling, setCancelling] = useState<boolean>(false);
+  const [validatingArtifact, setValidatingArtifact] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   // Load available artifacts & datasets
@@ -174,7 +176,27 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
   };
 
   const selectedArtifact = artifacts.find((a) => a.artifact_id === selectedArtifactId);
+  const selectedDataset = datasets.find((d) => d.id === selectedDatasetId);
   const isValidArtifact = selectedArtifact?.validation_status === 'valid';
+
+  const handleValidateSelectedArtifact = async () => {
+    if (!selectedArtifactId) return;
+    setValidatingArtifact(true);
+    setError(null);
+    try {
+      const res = await validateArtifact(selectedArtifactId, true);
+      if (res.is_valid) {
+        const artData = await fetchAllArtifacts();
+        setArtifacts(artData);
+      } else {
+        setError(`Artifact validation failed: ${res.errors.join('; ')}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Artifact validation request failed.');
+    } finally {
+      setValidatingArtifact(false);
+    }
+  };
 
   const getStatusBadge = (status: EvaluationStatus) => {
     switch (status) {
@@ -314,11 +336,45 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
                 ))}
               </select>
 
-              {selectedArtifact && !isValidArtifact && (
-                <p className="text-[11px] text-amber-400/90 flex items-center gap-1 mt-1" data-testid="artifact-unvalidated-warning">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>This artifact is not yet validated. Validate it in the Artifacts tab before evaluating.</span>
-                </p>
+              {selectedArtifact && (
+                <div className="bg-studio-bg/60 border border-studio-border/70 rounded-lg p-2.5 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-studio-muted">Base Model:</span>
+                    <span className="font-mono text-studio-text font-medium" data-testid="artifact-base-model">
+                      {selectedArtifact.base_model_identifier || selectedArtifact.model_identifier}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-studio-muted">Method & Size:</span>
+                    <span className="font-mono text-studio-muted text-[11px]">
+                      {selectedArtifact.fine_tuning_method.toUpperCase()} • {(selectedArtifact.size_bytes / (1024 * 1024)).toFixed(2)} MB
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-studio-muted">Integrity:</span>
+                    <span className={`font-mono font-medium text-[11px] ${isValidArtifact ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {isValidArtifact ? '✓ Validated' : selectedArtifact.validation_status}
+                    </span>
+                  </div>
+
+                  {!isValidArtifact && (
+                    <div className="pt-1.5 border-t border-studio-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <p className="text-[11px] text-amber-400/90 flex items-center gap-1" data-testid="artifact-unvalidated-warning">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        <span>This artifact is not yet validated. Validate it in the Artifacts tab before evaluating.</span>
+                      </p>
+                      <button
+                        onClick={handleValidateSelectedArtifact}
+                        disabled={validatingArtifact}
+                        className="px-2.5 py-1 rounded bg-studio-accent/20 hover:bg-studio-accent/30 text-studio-accent text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors shrink-0 disabled:opacity-50"
+                        data-testid="validate-artifact-inline-btn"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${validatingArtifact ? 'animate-spin' : ''}`} />
+                        <span>{validatingArtifact ? 'Validating...' : 'Validate Now'}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
 
@@ -340,6 +396,13 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
                   </option>
                 ))}
               </select>
+
+              {selectedDataset && (
+                <div className="bg-studio-bg/60 border border-studio-border/70 rounded-lg p-2 text-xs flex items-center justify-between text-studio-muted" data-testid="selected-dataset-info">
+                  <span>Schema: <strong className="text-studio-text font-mono">{selectedDataset.schema_type || 'instruction'}</strong></span>
+                  <span>Total Samples: <strong className="text-studio-text font-mono">{selectedDataset.total_samples}</strong></span>
+                </div>
+              )}
             </div>
 
             {/* Step 3: Split and Sample Bounds */}
