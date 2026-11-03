@@ -76,12 +76,14 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
       setArtifacts(artData);
       setDatasets(dsData.datasets || []);
 
-      if (initialArtifactId) {
-        setSelectedArtifactId(initialArtifactId);
-      } else if (artData.length > 0 && !selectedArtifactId) {
+      let targetArtifactId = initialArtifactId;
+      if (!targetArtifactId && artData.length > 0 && !selectedArtifactId) {
         // Prefer first valid artifact
         const firstValid = artData.find((a) => a.validation_status === 'valid') || artData[0];
-        setSelectedArtifactId(firstValid.artifact_id);
+        targetArtifactId = firstValid.artifact_id;
+      }
+      if (targetArtifactId) {
+        setSelectedArtifactId(targetArtifactId);
       }
 
       if (dsData.datasets && dsData.datasets.length > 0 && !selectedDatasetId) {
@@ -89,10 +91,15 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
       }
 
       // Load past evaluations
-      const evals = await fetchEvaluations({ page_size: 10 });
+      const evals = await fetchEvaluations({ page_size: 50 });
       setPastEvaluations(evals.evaluations || []);
-      if (evals.evaluations && evals.evaluations.length > 0 && !activeEvaluation) {
-        setActiveEvaluation(evals.evaluations[0]);
+
+      const activeArt = targetArtifactId || selectedArtifactId;
+      if (evals.evaluations && evals.evaluations.length > 0) {
+        const matching = activeArt ? evals.evaluations.find((ev) => ev.artifact_id === activeArt) : evals.evaluations[0];
+        setActiveEvaluation(matching || null);
+      } else {
+        setActiveEvaluation(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load evaluation setup.');
@@ -179,15 +186,26 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
   const selectedDataset = datasets.find((d) => d.id === selectedDatasetId);
   const isValidArtifact = selectedArtifact?.validation_status === 'valid';
 
+  const handleArtifactChange = (artId: string) => {
+    setSelectedArtifactId(artId);
+    setError(null);
+    const matching = pastEvaluations.find((ev) => ev.artifact_id === artId);
+    setActiveEvaluation(matching || null);
+  };
+
   const handleValidateSelectedArtifact = async () => {
     if (!selectedArtifactId) return;
     setValidatingArtifact(true);
     setError(null);
     try {
       const res = await validateArtifact(selectedArtifactId, true);
+      const artData = await fetchAllArtifacts();
+      setArtifacts(artData);
       if (res.is_valid) {
-        const artData = await fetchAllArtifacts();
-        setArtifacts(artData);
+        const updated = artData.find((a) => a.artifact_id === selectedArtifactId);
+        if (updated) {
+          setSelectedArtifactId(updated.artifact_id);
+        }
       } else {
         setError(`Artifact validation failed: ${res.errors.join('; ')}`);
       }
@@ -274,7 +292,12 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
                 value={activeEvaluation?.evaluation_id || ''}
                 onChange={(e) => {
                   const found = pastEvaluations.find((ev) => ev.evaluation_id === e.target.value);
-                  if (found) setActiveEvaluation(found);
+                  if (found) {
+                    setActiveEvaluation(found);
+                    if (found.artifact_id && found.artifact_id !== selectedArtifactId) {
+                      setSelectedArtifactId(found.artifact_id);
+                    }
+                  }
                 }}
                 className="bg-studio-card border border-studio-border rounded-md px-2.5 py-1.5 text-xs text-studio-text font-mono focus:outline-hidden focus:border-studio-accent"
                 data-testid="past-evaluations-select"
@@ -324,14 +347,14 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
               </label>
               <select
                 value={selectedArtifactId}
-                onChange={(e) => setSelectedArtifactId(e.target.value)}
+                onChange={(e) => handleArtifactChange(e.target.value)}
                 className="w-full bg-studio-bg border border-studio-border rounded-lg p-2 text-xs font-mono text-studio-text focus:outline-hidden focus:border-studio-accent"
                 data-testid="select-artifact"
               >
                 <option value="">-- Choose an artifact --</option>
                 {artifacts.map((a) => (
                   <option key={a.artifact_id} value={a.artifact_id}>
-                    {a.artifact_id} ({a.artifact_type.replace('_', ' ')}) - {a.model_identifier}
+                    {a.artifact_id} ({a.artifact_type.replace('_', ' ')}) - {a.base_model_identifier || a.model_identifier}
                   </option>
                 ))}
               </select>
@@ -352,16 +375,65 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-studio-muted">Integrity:</span>
-                    <span className={`font-mono font-medium text-[11px] ${isValidArtifact ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    <span className={`font-mono font-medium text-[11px] ${isValidArtifact ? 'text-emerald-400' : 'text-amber-400'}`} data-testid="artifact-validation-status">
                       {isValidArtifact ? '✓ Validated' : selectedArtifact.validation_status}
                     </span>
                   </div>
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-studio-muted">Base Model Availability:</span>
+                    <span
+                      className={`font-mono text-[11px] font-medium ${
+                        selectedArtifact.is_loadable === true
+                          ? 'text-emerald-400'
+                          : selectedArtifact.is_loadable === false
+                          ? 'text-rose-400'
+                          : 'text-zinc-400'
+                      }`}
+                      data-testid="base-model-cached-status"
+                    >
+                      {selectedArtifact.is_loadable === true
+                        ? '✓ Available locally (Load verified)'
+                        : selectedArtifact.is_loadable === false
+                        ? '✗ Load verification failed'
+                        : 'Unverified / Not Tested'}
+                    </span>
+                  </div>
+
+                  {selectedArtifact.load_error && (
+                    <div className="p-2 bg-rose-950/40 border border-rose-800/60 rounded text-rose-300 text-[11px]" data-testid="artifact-load-error">
+                      <span className="font-semibold text-rose-400">Load Error: </span>
+                      <span className="font-mono">{selectedArtifact.load_error}</span>
+                    </div>
+                  )}
+
+                  {selectedArtifact.validation_errors && selectedArtifact.validation_errors.length > 0 && (
+                    <div className="p-2 bg-rose-950/40 border border-rose-800/60 rounded text-rose-300 text-[11px] space-y-0.5" data-testid="artifact-validation-errors">
+                      <div className="font-semibold text-rose-400 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> Validation Errors:
+                      </div>
+                      {selectedArtifact.validation_errors.map((err, i) => (
+                        <div key={i} className="font-mono text-[10px]">• {err}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  {selectedArtifact.validation_warnings && selectedArtifact.validation_warnings.length > 0 && (
+                    <div className="p-2 bg-amber-950/40 border border-amber-800/60 rounded text-amber-300 text-[11px] space-y-0.5" data-testid="artifact-validation-warnings">
+                      <div className="font-semibold text-amber-400 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" /> Validation Warnings:
+                      </div>
+                      {selectedArtifact.validation_warnings.map((warn, i) => (
+                        <div key={i} className="font-mono text-[10px]">• {warn}</div>
+                      ))}
+                    </div>
+                  )}
 
                   {!isValidArtifact && (
                     <div className="pt-1.5 border-t border-studio-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <p className="text-[11px] text-amber-400/90 flex items-center gap-1" data-testid="artifact-unvalidated-warning">
                         <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                        <span>This artifact is not yet validated. Validate it in the Artifacts tab before evaluating.</span>
+                        <span>Artifact must be validated before running evaluation.</span>
                       </p>
                       <button
                         onClick={handleValidateSelectedArtifact}
@@ -523,7 +595,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
 
         {/* Right: Evaluation Progress & Results Dashboard (7 Cols) */}
         <div className="lg:col-span-7 space-y-5">
-          {activeEvaluation ? (
+          {activeEvaluation && (!selectedArtifactId || activeEvaluation.artifact_id === selectedArtifactId) ? (
             <div className="space-y-5">
               {/* Active Evaluation Card Header */}
               <div className="bg-studio-card border border-studio-border rounded-xl p-5 space-y-4">
@@ -769,11 +841,13 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
               )}
             </div>
           ) : (
-            <div className="p-16 border border-dashed border-studio-border rounded-xl bg-studio-card/20 text-center space-y-3 flex flex-col items-center justify-center">
+            <div className="p-16 border border-dashed border-studio-border rounded-xl bg-studio-card/20 text-center space-y-3 flex flex-col items-center justify-center" data-testid="eval-empty-placeholder">
               <BarChart2 className="w-10 h-10 text-studio-muted stroke-[1.5]" />
               <p className="text-sm font-semibold text-studio-text">No active evaluation selected</p>
               <p className="text-xs text-studio-muted max-w-sm">
-                Choose an artifact and dataset on the left, then click "Run Model Evaluation" to compute genuine loss and perplexity benchmarks.
+                {selectedArtifactId
+                  ? `No evaluation runs yet for artifact ${selectedArtifactId}. Select validation settings on the left and click "Run Model Evaluation".`
+                  : 'Choose an artifact and dataset on the left, then click "Run Model Evaluation" to compute genuine loss and perplexity benchmarks.'}
               </p>
             </div>
           )}

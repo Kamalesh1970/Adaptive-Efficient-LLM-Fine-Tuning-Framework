@@ -282,3 +282,117 @@ def test_real_hardware_evaluation_inference(eval_svc):
     assert completed.baseline_comparison.base_eval_loss is not None
     assert len(completed.samples) == 2
     assert completed.samples[0].fine_tuned_output is not None
+
+
+# ----------------------------------------------------------------------
+# 6. Specific Regression Tests for QLoRA Artifact art_run_4af5aab005ab_adapter
+# ----------------------------------------------------------------------
+
+def test_zero_byte_weights_fails_validation(artifact_svc, run_repo):
+    """Artifact validation fails when adapter weight file has 0 bytes."""
+    with tempfile.TemporaryDirectory(dir="artifacts/runs") as tmp_dir:
+        run_name = os.path.basename(tmp_dir)
+        art_id = f"art_{run_name}_adapter"
+
+        with open(os.path.join(tmp_dir, "adapter_config.json"), "w") as f:
+            json.dump({
+                "base_model_name_or_path": "Qwen/Qwen2.5-0.5B",
+                "peft_type": "LORA",
+                "r": 16,
+            }, f)
+        with open(os.path.join(tmp_dir, "adapter_model.safetensors"), "wb") as f:
+            pass  # 0 bytes
+
+        art = ArtifactMetadata(
+            artifact_id=art_id,
+            run_id=run_name,
+            artifact_type=ArtifactType.QLORA_ADAPTER,
+            model_identifier="Qwen/Qwen2.5-0.5B",
+            fine_tuning_method="qlora",
+            created_at="2026-11-03T00:00:00Z",
+            file_reference=tmp_dir,
+            validation_status=ValidationStatus.UNVALIDATED,
+        )
+        run_repo.save_or_update_artifact(art)
+
+        res = artifact_svc.validate_artifact(art_id)
+        assert res.is_valid is False
+        assert any("empty (0 bytes)" in err for err in res.errors)
+
+
+def test_art_run_4af5aab005ab_adapter_metadata_and_validation(artifact_svc, run_repo):
+    """
+    Verifies art_run_4af5aab005ab_adapter has exact verified metadata:
+    - Base model: Qwen/Qwen2.5-0.5B
+    - Quantization: NF4 4-bit
+    - Safe paths and checksums
+    - Load validation passes with local cache
+    """
+    art = run_repo.get_artifact("art_run_4af5aab005ab_adapter")
+    assert art is not None
+    assert art.base_model_identifier == "Qwen/Qwen2.5-0.5B"
+    assert art.model_identifier == "Qwen/Qwen2.5-0.5B"
+    assert art.fine_tuning_method == "qlora"
+    assert art.quantization_config is not None
+    assert art.quantization_config.get("load_in_4bit") is True
+
+    res = artifact_svc.validate_artifact("art_run_4af5aab005ab_adapter", check_loadable=True)
+    assert res.is_valid is True
+    assert res.validation_status == ValidationStatus.VALID
+    assert res.is_loadable is True
+    assert res.load_error is None
+    assert len(res.errors) == 0
+    assert "adapter_model.safetensors" in res.checksums
+
+
+def test_qlora_evaluation_resolves_base_model_and_persists_results(eval_svc, run_repo):
+    """
+    Verifies that running evaluation on art_run_4af5aab005ab_adapter:
+    1. Resolves base model as Qwen/Qwen2.5-0.5B (NOT test/genuine-mini-lm).
+    2. Executes inference with PEFT adapter and baseline comparison.
+    3. Computes truthful loss, perplexity, and qualitative completions.
+    4. Persists the result safely in run_repo.
+    """
+    config = EvaluationConfig(
+        artifact_id="art_run_4af5aab005ab_adapter",
+        dataset_id="ds_491491d57189",
+        split="validation",
+        max_samples=2,
+        batch_size=1,
+        context_length=512,
+        temperature=0.7,
+        max_new_tokens=16,
+        do_sample=False,
+        seed=42,
+        run_baseline_comparison=True,
+        generate_samples=True,
+        num_samples_to_save=2,
+    )
+
+    eval_run = eval_svc.create_evaluation(config)
+    assert eval_run.status == EvaluationStatus.QUEUED
+
+    completed = eval_svc.start_evaluation(eval_run.evaluation_id, background=False)
+    assert completed.status == EvaluationStatus.COMPLETED
+    assert completed.error_message is None
+    assert completed.metrics is not None
+    assert completed.metrics.eval_loss > 0.0
+    assert completed.metrics.perplexity > 1.0
+
+    # Baseline comparison verification
+    assert completed.baseline_comparison is not None
+    assert completed.baseline_comparison.base_model_identifier == "Qwen/Qwen2.5-0.5B"
+    assert completed.baseline_comparison.base_eval_loss is not None
+    assert completed.baseline_comparison.loss_delta is not None
+
+    # Sample generation verification
+    assert len(completed.samples) == 2
+    assert completed.samples[0].fine_tuned_output is not None
+    assert completed.samples[0].base_output is not None
+
+    # Persistence verification
+    persisted = run_repo.get_evaluation(eval_run.evaluation_id)
+    assert persisted is not None
+    assert persisted.status == EvaluationStatus.COMPLETED
+    assert persisted.metrics.eval_loss == completed.metrics.eval_loss
+

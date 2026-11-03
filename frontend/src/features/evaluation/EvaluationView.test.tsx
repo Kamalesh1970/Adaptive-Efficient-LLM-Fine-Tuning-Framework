@@ -263,4 +263,143 @@ describe('Phase 8: EvaluationView Component Tests', () => {
       expect(api.cancelEvaluation).toHaveBeenCalledWith('eval_running_003');
     });
   });
+
+  it('switching artifact isolates active evaluation and does not leak errors from other artifacts', async () => {
+    const failedEvalAnotherArtifact: EvaluationRun = {
+      ...mockCompletedEvaluation,
+      evaluation_id: 'eval_failed_other',
+      artifact_id: 'art_other_002',
+      status: 'failed',
+      error_message: "Model path 'test/genuine-mini-lm' was not found on local disk",
+    };
+
+    const multiArtifacts: ArtifactMetadata[] = [
+      {
+        ...mockArtifacts[0],
+        artifact_id: 'art_eval_001',
+        model_identifier: 'Qwen/Qwen2.5-0.5B',
+        base_model_identifier: 'Qwen/Qwen2.5-0.5B',
+      },
+      {
+        ...mockArtifacts[0],
+        artifact_id: 'art_other_002',
+        model_identifier: 'test/genuine-mini-lm',
+        base_model_identifier: 'test/genuine-mini-lm',
+      },
+    ];
+
+    vi.mocked(api.fetchAllArtifacts).mockResolvedValue(multiArtifacts);
+    vi.mocked(api.fetchEvaluations).mockResolvedValue({
+      evaluations: [failedEvalAnotherArtifact],
+      total: 1,
+      page: 1,
+      page_size: 10,
+    });
+
+    render(<EvaluationView initialArtifactId="art_eval_001" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('select-artifact')).toBeInTheDocument();
+    });
+
+    // art_eval_001 has NO evaluations, so it must display empty placeholder, NOT the failed message from art_other_002!
+    expect(screen.getByTestId('eval-empty-placeholder')).toBeInTheDocument();
+    expect(screen.queryByTestId('eval-failed-message')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Model path 'test\/genuine-mini-lm' was not found/i)).not.toBeInTheDocument();
+  });
+
+  it('displays unvalidated warning and enables evaluation after clicking Validate Now', async () => {
+    const unvalidatedArtifact: ArtifactMetadata = {
+      ...mockArtifacts[0],
+      artifact_id: 'art_unvalidated_qwen',
+      model_identifier: 'Qwen/Qwen2.5-0.5B',
+      base_model_identifier: 'Qwen/Qwen2.5-0.5B',
+      validation_status: 'unvalidated',
+      is_loadable: null,
+    };
+
+    const validatedArtifact: ArtifactMetadata = {
+      ...unvalidatedArtifact,
+      validation_status: 'valid',
+      is_loadable: true,
+    };
+
+    vi.mocked(api.fetchAllArtifacts).mockResolvedValue([unvalidatedArtifact]);
+    vi.mocked(api.validateArtifact).mockResolvedValue({
+      artifact_id: 'art_unvalidated_qwen',
+      is_valid: true,
+      validation_status: 'valid',
+      errors: [],
+      warnings: [],
+      checksums: {},
+      total_size_bytes: 35000000,
+      is_loadable: true,
+      load_error: null,
+      checked_at: '2026-11-04T00:00:00Z',
+    });
+
+    render(<EvaluationView initialArtifactId="art_unvalidated_qwen" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('artifact-unvalidated-warning')).toBeInTheDocument();
+      expect(screen.getByTestId('validate-artifact-inline-btn')).toBeInTheDocument();
+    });
+
+    // Start evaluation button should be disabled for unvalidated artifact
+    const launchBtn = screen.getByTestId('start-evaluation-btn');
+    expect(launchBtn).toBeDisabled();
+
+    // Now mock fetchAllArtifacts to return the validated artifact after validation call
+    vi.mocked(api.fetchAllArtifacts).mockResolvedValue([validatedArtifact]);
+
+    // Click Validate Now
+    const validateBtn = screen.getByTestId('validate-artifact-inline-btn');
+    fireEvent.click(validateBtn);
+
+    await waitFor(() => {
+      expect(api.validateArtifact).toHaveBeenCalledWith('art_unvalidated_qwen', true);
+      expect(screen.getByTestId('artifact-validation-status')).toHaveTextContent('✓ Validated');
+      expect(screen.getByTestId('base-model-cached-status')).toHaveTextContent(/Available locally/i);
+      expect(launchBtn).not.toBeDisabled();
+    });
+  });
+
+  it('displays local base model availability status and load verification', async () => {
+    const cachedArtifact: ArtifactMetadata = {
+      ...mockArtifacts[0],
+      artifact_id: 'art_cached_model',
+      base_model_identifier: 'Qwen/Qwen2.5-0.5B',
+      is_loadable: true,
+      validation_status: 'valid',
+    };
+
+    vi.mocked(api.fetchAllArtifacts).mockResolvedValue([cachedArtifact]);
+
+    render(<EvaluationView initialArtifactId="art_cached_model" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('artifact-base-model')).toHaveTextContent('Qwen/Qwen2.5-0.5B');
+      expect(screen.getByTestId('base-model-cached-status')).toHaveTextContent('✓ Available locally (Load verified)');
+    });
+  });
+
+  it('displays artifact validation errors when validation fails', async () => {
+    const errorArtifact: ArtifactMetadata = {
+      ...mockArtifacts[0],
+      artifact_id: 'art_broken',
+      base_model_identifier: 'test/missing-weights',
+      validation_status: 'invalid',
+      validation_errors: ["Missing required 'adapter_config.json' file."],
+      is_loadable: false,
+    };
+
+    vi.mocked(api.fetchAllArtifacts).mockResolvedValue([errorArtifact]);
+
+    render(<EvaluationView initialArtifactId="art_broken" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('artifact-validation-errors')).toBeInTheDocument();
+      expect(screen.getByText(/Missing required 'adapter_config\.json' file/i)).toBeInTheDocument();
+    });
+  });
 });

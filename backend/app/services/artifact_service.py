@@ -221,6 +221,10 @@ class ArtifactService:
             validation_status = existing_art.validation_status if existing_art else ValidationStatus.UNVALIDATED
             export_status = existing_art.export_status if existing_art else ExportStatus.NOT_EXPORTED
             exported_pkg = existing_art.exported_package_path if existing_art else None
+            is_loadable = existing_art.is_loadable if existing_art else None
+            load_error = existing_art.load_error if existing_art else None
+            val_errors = existing_art.validation_errors if existing_art else []
+            val_warnings = existing_art.validation_warnings if existing_art else []
 
             # Check if an export package exists on disk
             export_filename = f"{primary_artifact_id}_export.zip"
@@ -246,6 +250,10 @@ class ArtifactService:
                 exported_package_path=exported_pkg,
                 files=file_entries,
                 base_model_identifier=model_identifier,
+                is_loadable=is_loadable,
+                load_error=load_error,
+                validation_errors=val_errors,
+                validation_warnings=val_warnings,
             )
             self.repo.save_or_update_artifact(art_obj)
             artifacts.append(art_obj)
@@ -281,6 +289,14 @@ class ArtifactService:
                     cp_art_id = f"art_{run_id}_{entry}"
                     cp_rel_dir = os.path.join("artifacts", "runs", run_id, entry)
 
+                    existing_cp = self.repo.get_artifact(cp_art_id)
+                    cp_val_status = existing_cp.validation_status if existing_cp else ValidationStatus.UNVALIDATED
+                    cp_export_status = existing_cp.export_status if existing_cp else ExportStatus.NOT_EXPORTED
+                    cp_is_loadable = existing_cp.is_loadable if existing_cp else None
+                    cp_load_error = existing_cp.load_error if existing_cp else None
+                    cp_val_errors = existing_cp.validation_errors if existing_cp else []
+                    cp_val_warnings = existing_cp.validation_warnings if existing_cp else []
+
                     cp_art = ArtifactMetadata(
                         artifact_id=cp_art_id,
                         run_id=run_id,
@@ -293,10 +309,14 @@ class ArtifactService:
                         adapter_config=adapter_cfg,
                         quantization_config=quant_cfg,
                         checkpoint_step=step_val,
-                        validation_status=ValidationStatus.UNVALIDATED,
-                        export_status=ExportStatus.NOT_EXPORTED,
+                        validation_status=cp_val_status,
+                        export_status=cp_export_status,
                         files=cp_file_entries,
                         base_model_identifier=model_identifier,
+                        is_loadable=cp_is_loadable,
+                        load_error=cp_load_error,
+                        validation_errors=cp_val_errors,
+                        validation_warnings=cp_val_warnings,
                     )
                     self.repo.save_or_update_artifact(cp_art)
                     artifacts.append(cp_art)
