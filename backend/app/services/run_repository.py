@@ -359,6 +359,27 @@ class RunRepository:
                 result["config"] = {}
             return result
 
+    def get_runs_by_statuses(self, statuses: List[str]) -> List[Dict[str, Any]]:
+        """Retrieves all run records matching any of the specified statuses."""
+        if not statuses:
+            return []
+        placeholders = ",".join("?" for _ in statuses)
+        with self._lock, self._get_connection() as conn:
+            cursor = conn.execute(
+                f"SELECT * FROM runs WHERE status IN ({placeholders}) ORDER BY created_at ASC",
+                statuses,
+            )
+            rows = cursor.fetchall()
+            results = []
+            for r in rows:
+                item = dict(r)
+                try:
+                    item["config"] = json.loads(item["config_json"])
+                except Exception:
+                    item["config"] = {}
+                results.append(item)
+            return results
+
     def list_runs(
         self,
         page: int = 1,

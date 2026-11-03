@@ -370,6 +370,18 @@ export const CurrentRunView: React.FC<CurrentRunViewProps> = ({
         </div>
       )}
 
+      {/* Cancellation Message */}
+      {run && run.status === 'cancelled' && (
+        <div className="p-4 bg-amber-950/40 border border-amber-500/40 rounded-xl text-xs text-amber-200 space-y-1.5" data-testid="run-cancelled-banner">
+          <div className="font-bold flex items-center gap-1.5 text-amber-400">
+            <AlertTriangle className="w-4 h-4" /> Training Run Cancelled
+          </div>
+          <p className="font-mono text-[11px] leading-relaxed break-words bg-black/40 p-2.5 rounded border border-amber-900/50">
+            {run.error_message || "This training run was cancelled and terminated."}
+          </p>
+        </div>
+      )}
+
       {/* Progress & Loss Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
         {/* Step Progress Card */}

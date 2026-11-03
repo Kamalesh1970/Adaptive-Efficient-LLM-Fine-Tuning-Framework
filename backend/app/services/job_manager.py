@@ -248,7 +248,7 @@ class TrainingJob:
         except Exception as e:
             logger.warning(f"Error syncing run to database: {e}")
 
-    def request_cancellation(self) -> bool:
+    def request_cancellation(self, immediate: bool = False) -> bool:
         """Requests cancellation if the job is in a cancellable state."""
         with self._lock:
             terminal_states = {
@@ -262,10 +262,18 @@ class TrainingJob:
             if not self._cancel_event.is_set():
                 self._cancel_event.set()
 
-            if self.status == TrainingRunStatus.QUEUED:
-                self.status = TrainingRunStatus.CANCELLED
-                self.completed_at = datetime.now(timezone.utc).isoformat()
-                self.error_message = "Training run was cancelled before execution started."
+            if immediate or self.status == TrainingRunStatus.QUEUED:
+                self._status = TrainingRunStatus.CANCELLED
+                now = datetime.now(timezone.utc).isoformat()
+                self.completed_at = now
+                if self.started_at:
+                    try:
+                        s_dt = datetime.fromisoformat(self.started_at)
+                        c_dt = datetime.fromisoformat(now)
+                        self.elapsed_time_seconds = max(0.0, (c_dt - s_dt).total_seconds())
+                    except Exception:
+                        pass
+                self.error_message = self.error_message or "Training run was cancelled by user."
                 immediate_cancel = True
             else:
                 immediate_cancel = False
@@ -279,8 +287,9 @@ class TrainingJob:
             self.emit_event(
                 event_type=TrainingEventType.CANCELLATION_COMPLETED,
                 severity=EventSeverity.WARNING,
-                message="Training run cancelled before start.",
+                message="Training run cancelled.",
             )
+            self.sync_to_db()
         else:
             self.emit_event(
                 event_type=TrainingEventType.CANCELLATION_REQUESTED,
@@ -303,6 +312,23 @@ class TrainingJob:
             cancellation_requested = self.is_cancelled and self.status != TrainingRunStatus.CANCELLED
             last_log_time = self.events[-1].timestamp if self.events else (self.completed_at or self.started_at or self.created_at)
 
+            # Compute truthful elapsed time from timestamps/events if available
+            elapsed = self.elapsed_time_seconds
+            if elapsed <= 0.0 and self.started_at:
+                try:
+                    s_dt = datetime.fromisoformat(self.started_at)
+                    if self.completed_at:
+                        c_dt = datetime.fromisoformat(self.completed_at)
+                        elapsed = max(0.0, (c_dt - s_dt).total_seconds())
+                    elif self.events and self.status in {TrainingRunStatus.COMPLETED, TrainingRunStatus.FAILED, TrainingRunStatus.CANCELLED}:
+                        e_dt = datetime.fromisoformat(self.events[-1].timestamp)
+                        elapsed = max(0.0, (e_dt - s_dt).total_seconds())
+                    elif self.status not in {TrainingRunStatus.COMPLETED, TrainingRunStatus.FAILED, TrainingRunStatus.CANCELLED}:
+                        now_dt = datetime.now(timezone.utc)
+                        elapsed = max(0.0, (now_dt - s_dt).total_seconds())
+                except Exception:
+                    pass
+
             return TrainingRunResponse(
                 run_id=self.run_id,
                 status=self.status,
@@ -316,7 +342,7 @@ class TrainingJob:
                 num_epochs=self.num_epochs,
                 current_loss=self.current_loss,
                 loss_history=list(self.loss_history),
-                elapsed_time_seconds=round(self.elapsed_time_seconds, 2),
+                elapsed_time_seconds=round(elapsed, 2),
                 error_message=self.error_message,
                 device=self.device,
                 trainable_params=self.trainable_params,
@@ -360,8 +386,10 @@ class JobManager:
     def reconcile_interrupted_runs(self) -> int:
         """
         Reconciles orphaned runs from SQLite that were left in active/non-terminal
-        states across a backend restart or shutdown. Marks them FAILED so they
-        are not falsely reported as training when the process is not executing them.
+        states across a backend restart or shutdown.
+        If cancellation was requested, marks CANCELLED.
+        Otherwise marks FAILED so they are not falsely reported as training when
+        the process is not executing them.
         """
         active_states = [
             TrainingRunStatus.QUEUED.value,
@@ -374,28 +402,132 @@ class JobManager:
         reconciled = 0
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
-            for st in active_states:
-                items, _ = self.run_repo.list_runs(status_filter=st, page=1, page_size=100)
-                for item in items:
-                    if item.run_id not in self._active_threads or not self._active_threads[item.run_id].is_alive():
-                        persisted = self.run_repo.get_run(item.run_id)
-                        if persisted:
-                            persisted["status"] = TrainingRunStatus.FAILED.value
-                            persisted["completed_at"] = now
-                            persisted["error_message"] = "Training run was interrupted by backend server restart or process termination."
-                            self.run_repo.save_or_update_run(persisted)
-                            
-                            fail_event = TrainingEvent(
-                                event_id=f"evt_{uuid.uuid4().hex[:12]}",
-                                run_id=item.run_id,
-                                timestamp=now,
-                                event_type=TrainingEventType.TRAINING_FAILED,
-                                severity=EventSeverity.ERROR,
-                                message="Training run was interrupted by backend server restart or process termination.",
-                            )
-                            self.run_repo.add_event(fail_event)
-                            reconciled += 1
+            runs_fn = getattr(self.run_repo, "get_runs_by_statuses", None)
+            if callable(runs_fn):
+                orphaned = runs_fn(active_states)
+            else:
+                orphaned = []
+                for st in active_states:
+                    items, _ = self.run_repo.list_runs(status_filter=st, page=1, page_size=100)
+                    for item in items:
+                        r = self.run_repo.get_run(item.run_id)
+                        if r:
+                            orphaned.append(r)
+
+            for persisted in orphaned:
+                run_id = persisted["run_id"]
+                if run_id not in self._active_threads or not self._active_threads[run_id].is_alive():
+                    events, _, _ = self.run_repo.get_events(run_id=run_id, limit=500)
+                    has_cancel_req = any(
+                        (e.event_type == TrainingEventType.CANCELLATION_REQUESTED.value or e.event_type == "cancellation_requested")
+                        for e in events
+                    )
+
+                    last_evt_ts = events[-1].timestamp if events else now
+                    elapsed = float(persisted.get("elapsed_time_seconds", 0.0) or 0.0)
+                    if elapsed <= 0.0 and persisted.get("started_at"):
+                        try:
+                            s_dt = datetime.fromisoformat(persisted["started_at"])
+                            e_dt = datetime.fromisoformat(last_evt_ts)
+                            elapsed = max(0.0, (e_dt - s_dt).total_seconds())
+                        except Exception:
+                            pass
+
+                    if has_cancel_req:
+                        target_status = TrainingRunStatus.CANCELLED.value
+                        target_event = TrainingEventType.CANCELLATION_COMPLETED
+                        target_msg = "Training run was cancelled by user."
+                        target_severity = EventSeverity.WARNING
+                    else:
+                        target_status = TrainingRunStatus.FAILED.value
+                        target_event = TrainingEventType.TRAINING_FAILED
+                        target_msg = "Training run was interrupted by backend server restart or process termination."
+                        target_severity = EventSeverity.ERROR
+
+                    persisted["status"] = target_status
+                    persisted["completed_at"] = last_evt_ts
+                    persisted["elapsed_time_seconds"] = elapsed
+                    persisted["error_message"] = target_msg
+                    self.run_repo.save_or_update_run(persisted)
+
+                    rec_event = TrainingEvent(
+                        event_id=f"evt_{uuid.uuid4().hex[:12]}",
+                        run_id=run_id,
+                        timestamp=now,
+                        event_type=target_event,
+                        severity=target_severity,
+                        message=target_msg,
+                        global_step=int(persisted.get("current_step", 0) or 0),
+                        epoch=float(persisted.get("current_epoch", 0.0) or 0.0),
+                        training_loss=persisted.get("current_loss"),
+                        learning_rate=persisted.get("learning_rate"),
+                    )
+                    self.run_repo.add_event(rec_event)
+
+                    if run_id in self._jobs:
+                        j = self._jobs[run_id]
+                        j._status = TrainingRunStatus(target_status)
+                        j.completed_at = last_evt_ts
+                        j.elapsed_time_seconds = elapsed
+                        j.error_message = target_msg
+
+                    reconciled += 1
         return reconciled
+
+    def _verify_and_reconcile_single_job(self, job: TrainingJob) -> None:
+        """
+        Verifies that an active (non-terminal) job is backed by a living worker thread.
+        If the worker thread is dead or absent, reconciles the run truthfully based on events.
+        """
+        terminal_statuses = {
+            TrainingRunStatus.COMPLETED,
+            TrainingRunStatus.FAILED,
+            TrainingRunStatus.CANCELLED,
+        }
+        if job.status in terminal_statuses:
+            return
+
+        thread_alive = job.run_id in self._active_threads and self._active_threads[job.run_id].is_alive()
+        if thread_alive:
+            return
+
+        events, _, _ = self.run_repo.get_events(run_id=job.run_id, limit=500)
+        has_cancel_req = any(
+            (e.event_type == TrainingEventType.CANCELLATION_REQUESTED.value or e.event_type == "cancellation_requested")
+            for e in events
+        ) or job.is_cancelled
+
+        last_evt_ts = events[-1].timestamp if events else (job.completed_at or job.started_at or job.created_at)
+        elapsed = job.elapsed_time_seconds
+        if elapsed <= 0.0 and job.started_at:
+            try:
+                s_dt = datetime.fromisoformat(job.started_at)
+                e_dt = datetime.fromisoformat(last_evt_ts)
+                elapsed = max(0.0, (e_dt - s_dt).total_seconds())
+            except Exception:
+                pass
+
+        now = datetime.now(timezone.utc).isoformat()
+        job.completed_at = last_evt_ts
+        job.elapsed_time_seconds = elapsed
+
+        if has_cancel_req:
+            job._status = TrainingRunStatus.CANCELLED
+            job.error_message = job.error_message or "Training run was cancelled by user."
+            job.emit_event(
+                event_type=TrainingEventType.CANCELLATION_COMPLETED,
+                severity=EventSeverity.WARNING,
+                message="Training run was cancelled and terminated.",
+            )
+        else:
+            job._status = TrainingRunStatus.FAILED
+            job.error_message = job.error_message or "Training run was interrupted by backend server restart or process termination."
+            job.emit_event(
+                event_type=TrainingEventType.TRAINING_FAILED,
+                severity=EventSeverity.ERROR,
+                message="Training run was interrupted by backend server restart or process termination.",
+            )
+        job.sync_to_db()
 
     def create_job(
         self,
@@ -516,6 +648,13 @@ class JobManager:
         job.started_at = row["started_at"]
         job.completed_at = row["completed_at"]
         job.elapsed_time_seconds = float(row.get("elapsed_time_seconds", 0.0) or 0.0)
+        if job.elapsed_time_seconds <= 0.0 and job.started_at and job.completed_at:
+            try:
+                s_dt = datetime.fromisoformat(job.started_at)
+                c_dt = datetime.fromisoformat(job.completed_at)
+                job.elapsed_time_seconds = max(0.0, (c_dt - s_dt).total_seconds())
+            except Exception:
+                pass
         job.current_step = int(row.get("current_step", 0) or 0)
         job.max_steps = int(row.get("max_steps", 0) or 0)
         job.current_epoch = float(row.get("current_epoch", 0.0) or 0.0)
@@ -547,6 +686,10 @@ class JobManager:
         job = self.get_job(run_id)
         if not job:
             return False
+        with self._lock:
+            thread_alive = run_id in self._active_threads and self._active_threads[run_id].is_alive()
+        if not thread_alive:
+            return job.request_cancellation(immediate=True)
         return job.request_cancellation()
 
     def start_job(self, run_id: str, background: bool = True) -> TrainingJob:
