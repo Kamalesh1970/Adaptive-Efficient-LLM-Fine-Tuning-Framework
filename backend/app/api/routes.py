@@ -6,6 +6,7 @@ import os
 from typing import Dict, Any, Optional, List
 import json
 import math
+from pydantic import BaseModel, Field
 from email.parser import BytesParser
 from email import policy
 from fastapi import APIRouter, HTTPException, status, Request, Query
@@ -196,6 +197,54 @@ def get_model_catalog() -> ModelCatalogResponse:
     service = get_model_catalog_service()
     models = service.get_all_models()
     return ModelCatalogResponse(models=models, total=len(models))
+
+
+class ModelDownloadConfirmation(BaseModel):
+    confirm_download: bool = Field(default=False, description="User confirmation to download model")
+
+
+@router.get(
+    "/model-cache/{model_id:path}",
+    summary="Check if Model is in Local Disk/Cache",
+)
+def get_model_cache_status(model_id: str):
+    """Checks whether a base model identifier is present on disk or in the HF cache."""
+    from backend.app.services.model_loader import is_model_cached_locally
+    cached, local_ref = is_model_cached_locally(model_id)
+    return {
+        "model_identifier": model_id,
+        "is_cached": cached,
+        "local_reference": local_ref,
+    }
+
+
+@router.post(
+    "/model-cache/{model_id:path}/download",
+    summary="Explicitly Download Model with Confirmation",
+)
+def download_model_explicit(model_id: str, payload: ModelDownloadConfirmation):
+    """Explicitly downloads a model after user confirmation to preserve offline restrictions."""
+    if not payload.confirm_download:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Explicit user confirmation ('confirm_download: true') is required to download models.",
+        )
+    from backend.app.services.model_loader import is_model_cached_locally
+    cached, local_ref = is_model_cached_locally(model_id)
+    if cached:
+        return {"status": "already_cached", "model_identifier": model_id, "local_reference": local_ref}
+
+    try:
+        from transformers import AutoTokenizer, AutoModelForCausalLM
+        AutoTokenizer.from_pretrained(model_id)
+        AutoModelForCausalLM.from_pretrained(model_id)
+        cached, local_ref = is_model_cached_locally(model_id)
+        return {"status": "downloaded", "model_identifier": model_id, "local_reference": local_ref}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download model '{model_id}': {e}",
+        )
 
 
 @router.get(
@@ -839,12 +888,18 @@ def get_run_artifacts(run_id: str) -> RunArtifactsListResponse:
     response_model=List[ArtifactMetadata],
     summary="List All Training Artifacts",
 )
-def list_artifacts(run_id: Optional[str] = Query(None, description="Optional run ID filter")) -> List[ArtifactMetadata]:
+def list_artifacts(
+    run_id: Optional[str] = Query(None, description="Optional run ID filter"),
+    exclude_test_fixtures: bool = Query(False, description="Filter out test fixtures and dummy artifacts"),
+) -> List[ArtifactMetadata]:
     """Lists registered artifacts across all runs or filtered by run ID."""
     art_svc = get_artifact_service()
     if run_id:
-        return art_svc.discover_artifacts_for_run(run_id)
-    return art_svc.list_all_artifacts()
+        arts = art_svc.discover_artifacts_for_run(run_id)
+        if exclude_test_fixtures:
+            arts = [a for a in arts if not a.is_test_fixture]
+        return arts
+    return art_svc.list_all_artifacts(exclude_test_fixtures=exclude_test_fixtures)
 
 
 @router.get(

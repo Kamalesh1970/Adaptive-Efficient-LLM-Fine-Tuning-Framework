@@ -47,6 +47,54 @@ def compute_file_sha256(filepath: str) -> str:
     return hasher.hexdigest()
 
 
+def is_test_fixture_artifact(
+    run_id: str,
+    model_identifier: Optional[str] = None,
+    base_model_identifier: Optional[str] = None,
+    size_bytes: int = 0,
+    files: Optional[List[Any]] = None,
+) -> bool:
+    """
+    Identifies whether an artifact is a synthetic or mock test fixture.
+    Test fixtures have:
+    - model_identifier or base_model_identifier starting with 'test/' or 'test-' or equal to synthetic test models.
+    - run_id starting with test run prefixes ('test_', 'run_test_', 'run_dup_test_', 'run_eval_test_', 'run_api_art_', 'run_api_export_').
+    - tiny dummy weights (< 100 KB like 25-48 byte mocks in tests).
+    """
+    models = [m.lower() for m in (model_identifier, base_model_identifier) if m]
+    for m in models:
+        if m.startswith("test/") or m.startswith("test-") or m in ("dummy", "synthetic-test-model"):
+            return True
+
+    rid = run_id.lower()
+    test_run_prefixes = (
+        "run_test_", "test_", "run_dup_test_", "run_eval_test_",
+        "run_api_art_", "run_api_export_"
+    )
+    if any(rid.startswith(prefix) for prefix in test_run_prefixes):
+        return True
+
+    # Adapter / checkpoint artifacts with dummy sizes (< 100 KB) are artificial test fixtures
+    if 0 < size_bytes < 100_000:
+        return True
+
+    if files:
+        weight_files = [
+            f for f in files 
+            if (isinstance(f, ArtifactFileEntry) and f.filename in ("adapter_model.safetensors", "adapter_model.bin"))
+            or (isinstance(f, dict) and f.get("filename") in ("adapter_model.safetensors", "adapter_model.bin"))
+        ]
+        if weight_files:
+            all_tiny = all(
+                (f.size_bytes < 100_000 if isinstance(f, ArtifactFileEntry) else f.get("size_bytes", 0) < 100_000)
+                for f in weight_files
+            )
+            if all_tiny:
+                return True
+
+    return False
+
+
 class ArtifactSecurityError(PermissionError):
     """Raised when an artifact path traversal or symlink escape is detected."""
     pass
@@ -233,6 +281,14 @@ class ArtifactService:
                 export_status = ExportStatus.EXPORTED
                 exported_pkg = os.path.join("artifacts", "exports", export_filename)
 
+            is_fixture = is_test_fixture_artifact(
+                run_id=run_id,
+                model_identifier=model_identifier,
+                base_model_identifier=model_identifier,
+                size_bytes=total_size,
+                files=file_entries,
+            )
+
             art_obj = ArtifactMetadata(
                 artifact_id=primary_artifact_id,
                 run_id=run_id,
@@ -254,6 +310,7 @@ class ArtifactService:
                 load_error=load_error,
                 validation_errors=val_errors,
                 validation_warnings=val_warnings,
+                is_test_fixture=is_fixture,
             )
             self.repo.save_or_update_artifact(art_obj)
             artifacts.append(art_obj)
@@ -297,6 +354,14 @@ class ArtifactService:
                     cp_val_errors = existing_cp.validation_errors if existing_cp else []
                     cp_val_warnings = existing_cp.validation_warnings if existing_cp else []
 
+                    is_cp_fixture = is_test_fixture_artifact(
+                        run_id=run_id,
+                        model_identifier=model_identifier,
+                        base_model_identifier=model_identifier,
+                        size_bytes=cp_total_sz,
+                        files=cp_file_entries,
+                    )
+
                     cp_art = ArtifactMetadata(
                         artifact_id=cp_art_id,
                         run_id=run_id,
@@ -317,6 +382,7 @@ class ArtifactService:
                         load_error=cp_load_error,
                         validation_errors=cp_val_errors,
                         validation_warnings=cp_val_warnings,
+                        is_test_fixture=is_cp_fixture,
                     )
                     self.repo.save_or_update_artifact(cp_art)
                     artifacts.append(cp_art)
@@ -363,6 +429,13 @@ class ArtifactService:
         """Retrieves artifact by ID, attempting discovery if not yet in DB."""
         art = self.repo.get_artifact(artifact_id)
         if art:
+            art.is_test_fixture = is_test_fixture_artifact(
+                run_id=art.run_id,
+                model_identifier=art.model_identifier,
+                base_model_identifier=art.base_model_identifier,
+                size_bytes=art.size_bytes,
+                files=art.files,
+            )
             return art
 
         # Try to infer run_id from artifact_id (format: art_{run_id}_adapter)
@@ -373,6 +446,13 @@ class ArtifactService:
                 self.discover_artifacts_for_run(run_id)
                 art = self.repo.get_artifact(artifact_id)
                 if art:
+                    art.is_test_fixture = is_test_fixture_artifact(
+                        run_id=art.run_id,
+                        model_identifier=art.model_identifier,
+                        base_model_identifier=art.base_model_identifier,
+                        size_bytes=art.size_bytes,
+                        files=art.files,
+                    )
                     return art
             elif "_checkpoint-" in clean:
                 parts = clean.split("_checkpoint-")
@@ -380,6 +460,13 @@ class ArtifactService:
                 self.discover_artifacts_for_run(run_id)
                 art = self.repo.get_artifact(artifact_id)
                 if art:
+                    art.is_test_fixture = is_test_fixture_artifact(
+                        run_id=art.run_id,
+                        model_identifier=art.model_identifier,
+                        base_model_identifier=art.base_model_identifier,
+                        size_bytes=art.size_bytes,
+                        files=art.files,
+                    )
                     return art
 
         # Fallback: scan directories in runs_root
@@ -389,19 +476,39 @@ class ArtifactService:
                     self.discover_artifacts_for_run(d)
                     found = self.repo.get_artifact(artifact_id)
                     if found:
+                        found.is_test_fixture = is_test_fixture_artifact(
+                            run_id=found.run_id,
+                            model_identifier=found.model_identifier,
+                            base_model_identifier=found.base_model_identifier,
+                            size_bytes=found.size_bytes,
+                            files=found.files,
+                        )
                         return found
 
         return None
 
-    def list_all_artifacts(self) -> List[ArtifactMetadata]:
-        """Returns all registered artifacts across all runs."""
+    def list_all_artifacts(self, exclude_test_fixtures: bool = False) -> List[ArtifactMetadata]:
+        """Returns all registered artifacts across all runs, optionally filtering out test fixtures."""
         # Check all run directories in runs_root
         if os.path.isdir(self.runs_root):
             for d in os.listdir(self.runs_root):
                 dpath = os.path.join(self.runs_root, d)
                 if os.path.isdir(dpath) and d.startswith("run_"):
                     self.discover_artifacts_for_run(d)
-        return self.repo.list_artifacts()
+        
+        all_artifacts = self.repo.list_artifacts()
+        for a in all_artifacts:
+            a.is_test_fixture = is_test_fixture_artifact(
+                run_id=a.run_id,
+                model_identifier=a.model_identifier,
+                base_model_identifier=a.base_model_identifier,
+                size_bytes=a.size_bytes,
+                files=a.files,
+            )
+
+        if exclude_test_fixtures:
+            return [a for a in all_artifacts if not a.is_test_fixture]
+        return all_artifacts
 
     # -------------------------------------------------------------
     # Artifact Validation
@@ -485,8 +592,42 @@ class ArtifactService:
                     else:
                         base_model_name = cfg.get("base_model_name_or_path")
                         if not base_model_name:
-                            warnings.append("'adapter_config.json' is missing 'base_model_name_or_path'.")
-                        elif not artifact.base_model_identifier:
+                            # Attempt safe repair from run configuration files or artifact metadata
+                            candidate_base = None
+                            cfg_path = os.path.join(target_dir, "training_config.json")
+                            if os.path.isfile(cfg_path):
+                                try:
+                                    with open(cfg_path, "r", encoding="utf-8") as tf:
+                                        candidate_base = json.load(tf).get("model_identifier")
+                                except Exception:
+                                    pass
+                            if not candidate_base:
+                                meta_path = os.path.join(target_dir, "run_metadata.json")
+                                if os.path.isfile(meta_path):
+                                    try:
+                                        with open(meta_path, "r", encoding="utf-8") as mf:
+                                            candidate_base = json.load(mf).get("model_identifier")
+                                    except Exception:
+                                        pass
+                            if not candidate_base:
+                                candidate_base = artifact.base_model_identifier or artifact.model_identifier
+
+                            if candidate_base and candidate_base not in ("unknown_model", ""):
+                                cfg["base_model_name_or_path"] = candidate_base
+                                try:
+                                    with open(adapter_cfg_file, "w", encoding="utf-8") as acf:
+                                        json.dump(cfg, acf, indent=2)
+                                    warnings.append(
+                                        f"'adapter_config.json' was missing 'base_model_name_or_path'; safely repaired to '{candidate_base}' from run metadata."
+                                    )
+                                    base_model_name = candidate_base
+                                    artifact.base_model_identifier = candidate_base
+                                    artifact.adapter_config = cfg
+                                except Exception as e:
+                                    errors.append(f"'adapter_config.json' is missing 'base_model_name_or_path' and repair failed: {e}")
+                            else:
+                                errors.append("'adapter_config.json' is missing required 'base_model_name_or_path'.")
+                        else:
                             artifact.base_model_identifier = base_model_name
 
                         if "peft_type" not in cfg and "r" not in cfg:
@@ -588,16 +729,16 @@ class ArtifactService:
 
                         is_loadable = True
                     else:
-                        warnings.append(
-                            f"Base model '{base_id}' is not in local cache or disk. Actual model weights could not be loaded locally without downloading."
+                        is_loadable = False
+                        load_error = (
+                            f"Model path '{base_id}' was not found on local disk or in the local model cache. "
+                            "Automatic remote model downloading is restricted during evaluation."
                         )
-                        # Do not report successful model loading if only file checks passed
-                        is_loadable = None
+                        errors.append(load_error)
                 else:
-                    warnings.append(
-                        "Machine learning dependencies (transformers/peft) are not installed. Cannot test live model load."
-                    )
-                    is_loadable = None
+                    is_loadable = False
+                    load_error = "Machine learning dependencies (transformers/peft) are not installed. Cannot test live model load."
+                    errors.append(load_error)
             except Exception as e:
                 is_loadable = False
                 load_error = str(e)
@@ -617,6 +758,13 @@ class ArtifactService:
         artifact.size_bytes = total_size
         artifact.is_loadable = is_loadable
         artifact.load_error = load_error
+        artifact.is_test_fixture = is_test_fixture_artifact(
+            run_id=artifact.run_id,
+            model_identifier=artifact.model_identifier,
+            base_model_identifier=artifact.base_model_identifier,
+            size_bytes=total_size,
+            files=updated_files,
+        )
         self.repo.save_or_update_artifact(artifact)
 
         return ArtifactValidationResponse(

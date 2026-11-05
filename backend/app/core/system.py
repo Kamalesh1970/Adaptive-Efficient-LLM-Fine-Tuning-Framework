@@ -99,6 +99,21 @@ def get_system_hardware_info() -> Dict[str, Any]:
             info["diagnostic_message"] = "PyTorch was built without CUDA support (CPU-only build)."
         else:
             info["detection_status"] = "cuda_unavailable"
+            asus_dgpu_disable = "/sys/devices/platform/asus-nb-wmi/dgpu_disable"
+            import os
+            if os.path.isfile(asus_dgpu_disable):
+                try:
+                    with open(asus_dgpu_disable, "r") as f:
+                        if f.read().strip() == "1":
+                            info["diagnostic_message"] = (
+                                f"PyTorch was built with CUDA {cuda_build}, but CUDA runtime is not available on this system: "
+                                "Discrete NVIDIA GPU is currently powered off by ASUS hardware firmware (dgpu_disable=1). "
+                                "Run 'bash scripts/enable_gpu.sh' or 'echo 0 | sudo tee /sys/devices/platform/asus-nb-wmi/dgpu_disable' "
+                                "to re-enable PCIe power to the GPU."
+                            )
+                            return info
+                except Exception:
+                    pass
             info["diagnostic_message"] = (
                 f"PyTorch was built with CUDA {cuda_build}, but CUDA runtime is not available on this system."
             )

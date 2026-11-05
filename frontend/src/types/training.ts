@@ -444,6 +444,7 @@ export interface ArtifactMetadata {
   base_model_identifier?: string | null;
   is_loadable?: boolean | null;
   load_error?: string | null;
+  is_test_fixture?: boolean;
 }
 
 export interface RunArtifactsListResponse {

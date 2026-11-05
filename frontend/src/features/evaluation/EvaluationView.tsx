@@ -45,6 +45,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>(initialArtifactId || '');
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>('');
+  const [includeTestFixtures, setIncludeTestFixtures] = useState<boolean>(false);
 
   // Configuration states
   const [split, setSplit] = useState<string>('validation');
@@ -70,20 +71,33 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
     setError(null);
     try {
       const [artData, dsData] = await Promise.all([
-        fetchAllArtifacts(),
+        fetchAllArtifacts(undefined, !includeTestFixtures),
         fetchDatasets(),
       ]);
-      setArtifacts(artData);
+      const filteredArts = includeTestFixtures ? artData : artData.filter((a) => !a.is_test_fixture);
+      setArtifacts(filteredArts);
       setDatasets(dsData.datasets || []);
 
-      let targetArtifactId = initialArtifactId;
-      if (!targetArtifactId && artData.length > 0 && !selectedArtifactId) {
-        // Prefer first valid artifact
-        const firstValid = artData.find((a) => a.validation_status === 'valid') || artData[0];
-        targetArtifactId = firstValid.artifact_id;
+      // Restore user selection or use initialArtifactId
+      const savedArtifactId = typeof window !== 'undefined' ? sessionStorage.getItem('selected_eval_artifact_id') : null;
+      let targetArtifactId = initialArtifactId || (savedArtifactId && filteredArts.some(a => a.artifact_id === savedArtifactId) ? savedArtifactId : null);
+
+      if (!targetArtifactId) {
+        // Prefer the verified trained QLoRA artifact
+        const realAdapter = filteredArts.find(a => a.artifact_id.includes('17f63adb') && a.validation_status === 'valid')
+          || filteredArts.find(a => !a.is_test_fixture && a.validation_status === 'valid');
+        if (realAdapter) {
+          targetArtifactId = realAdapter.artifact_id;
+        } else if (filteredArts.length === 1) {
+          targetArtifactId = filteredArts[0].artifact_id;
+        }
       }
+
       if (targetArtifactId) {
         setSelectedArtifactId(targetArtifactId);
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('selected_eval_artifact_id', targetArtifactId);
+        }
       }
 
       if (dsData.datasets && dsData.datasets.length > 0 && !selectedDatasetId) {
@@ -106,7 +120,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [initialArtifactId]);
+  }, [initialArtifactId, includeTestFixtures]);
 
   useEffect(() => {
     loadPrerequisites();
@@ -188,6 +202,13 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
 
   const handleArtifactChange = (artId: string) => {
     setSelectedArtifactId(artId);
+    if (typeof window !== 'undefined') {
+      if (artId) {
+        sessionStorage.setItem('selected_eval_artifact_id', artId);
+      } else {
+        sessionStorage.removeItem('selected_eval_artifact_id');
+      }
+    }
     setError(null);
     const matching = pastEvaluations.find((ev) => ev.artifact_id === artId);
     setActiveEvaluation(matching || null);
@@ -199,10 +220,11 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
     setError(null);
     try {
       const res = await validateArtifact(selectedArtifactId, true);
-      const artData = await fetchAllArtifacts();
-      setArtifacts(artData);
+      const artData = await fetchAllArtifacts(undefined, !includeTestFixtures);
+      const filteredArts = includeTestFixtures ? artData : artData.filter((a) => !a.is_test_fixture);
+      setArtifacts(filteredArts);
       if (res.is_valid) {
-        const updated = artData.find((a) => a.artifact_id === selectedArtifactId);
+        const updated = filteredArts.find((a) => a.artifact_id === selectedArtifactId);
         if (updated) {
           setSelectedArtifactId(updated.artifact_id);
         }
@@ -337,14 +359,26 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
 
             {/* Step 1: Select Artifact */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-studio-text flex items-center justify-between">
-                <span>1. Select Trained Artifact</span>
-                {selectedArtifact && (
-                  <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${isValidArtifact ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}`}>
-                    {selectedArtifact.validation_status}
-                  </span>
-                )}
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-studio-text flex items-center gap-1.5">
+                  <span>1. Select Trained Artifact</span>
+                  {selectedArtifact && (
+                    <span className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${isValidArtifact ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'}`}>
+                      {selectedArtifact.validation_status}
+                    </span>
+                  )}
+                </label>
+                <label className="text-[10px] text-studio-muted flex items-center gap-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeTestFixtures}
+                    onChange={(e) => setIncludeTestFixtures(e.target.checked)}
+                    className="w-3 h-3 rounded bg-studio-bg border-studio-border text-studio-accent focus:ring-0"
+                    data-testid="toggle-test-fixtures"
+                  />
+                  <span>Show test fixtures</span>
+                </label>
+              </div>
               <select
                 value={selectedArtifactId}
                 onChange={(e) => handleArtifactChange(e.target.value)}
@@ -354,7 +388,7 @@ export const EvaluationView: React.FC<EvaluationViewProps> = ({
                 <option value="">-- Choose an artifact --</option>
                 {artifacts.map((a) => (
                   <option key={a.artifact_id} value={a.artifact_id}>
-                    {a.artifact_id} ({a.artifact_type.replace('_', ' ')}) - {a.base_model_identifier || a.model_identifier}
+                    {a.artifact_id} • {a.base_model_identifier || a.model_identifier} • {(a.size_bytes / (1024 * 1024)).toFixed(2)} MB • {a.validation_status.toUpperCase()}{a.is_test_fixture ? ' [TEST]' : ''}
                   </option>
                 ))}
               </select>

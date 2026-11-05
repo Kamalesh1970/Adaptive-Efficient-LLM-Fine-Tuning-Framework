@@ -316,9 +316,23 @@ export async function fetchRunCheckpoints(
 // Phase 8: Artifacts, Export & Model Evaluation
 // ---------------------------------------------------------
 
-export async function fetchAllArtifacts(runId?: string): Promise<ArtifactMetadata[]> {
-  const query = runId ? `?run_id=${encodeURIComponent(runId)}` : '';
+export async function fetchAllArtifacts(runId?: string, excludeTestFixtures: boolean = true): Promise<ArtifactMetadata[]> {
+  const params = new URLSearchParams();
+  if (runId) params.append('run_id', runId);
+  if (excludeTestFixtures) params.append('exclude_test_fixtures', 'true');
+  const query = params.toString() ? `?${params.toString()}` : '';
   return request<ArtifactMetadata[]>(`/artifacts${query}`);
+}
+
+export async function checkModelCacheStatus(modelId: string): Promise<{ model_identifier: string; is_cached: boolean; local_reference: string | null }> {
+  return request<{ model_identifier: string; is_cached: boolean; local_reference: string | null }>(`/model-cache/${encodeURIComponent(modelId)}`);
+}
+
+export async function downloadModelExplicit(modelId: string, confirmDownload = true): Promise<{ status: string; model_identifier: string; local_reference: string | null }> {
+  return request<{ status: string; model_identifier: string; local_reference: string | null }>(`/model-cache/${encodeURIComponent(modelId)}/download`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm_download: confirmDownload }),
+  });
 }
 
 export async function fetchArtifactDetails(artifactId: string): Promise<ArtifactMetadata> {

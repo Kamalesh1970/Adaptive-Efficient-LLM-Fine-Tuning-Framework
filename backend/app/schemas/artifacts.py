@@ -67,6 +67,7 @@ class ArtifactMetadata(BaseModel):
     base_model_identifier: Optional[str] = Field(default=None, description="Reference to base model")
     is_loadable: Optional[bool] = Field(default=None, description="Whether artifact was successfully loaded/tested")
     load_error: Optional[str] = Field(default=None, description="Error encountered during load verification")
+    is_test_fixture: bool = Field(default=False, description="Whether this artifact is a synthetic or mock test fixture")
 
 
 class RunArtifactsListResponse(BaseModel):
